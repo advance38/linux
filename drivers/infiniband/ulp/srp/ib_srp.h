@@ -78,7 +78,16 @@ enum {
 	SRP_MAP_NO_FMR		= 1,
 };
 
+/**
+ * enum srp_target_state - State of an SRP target.
+ * @SRP_TARGET_CONNECTING: IB connection being established and SCSI host being
+ *                      added.
+ * @SRP_TARGET_LIVE: IB RC connection has been established.
+ * @SRP_TARGET_REMOVED: IB RC connection is about to be closed and SCSI host
+ *                      removal is pending.
+ */
 enum srp_target_state {
+	SRP_TARGET_CONNECTING,
 	SRP_TARGET_LIVE,
 	SRP_TARGET_REMOVED,
 };
@@ -163,6 +172,8 @@ struct srp_target_port {
 
 	u32			rq_tmo_jiffies;
 	bool			connected;
+	bool			reconnecting;
+	bool			scsi_host_added;
 
 	struct ib_cm_id	       *cm_id;
 
@@ -180,6 +191,7 @@ struct srp_target_port {
 	struct completion	done;
 	int			status;
 	bool			qp_in_error;
+	struct mutex		mutex;
 
 	struct completion	tsk_mgmt_done;
 	u8			tsk_mgmt_status;

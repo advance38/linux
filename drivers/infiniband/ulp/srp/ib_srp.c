@@ -444,6 +444,24 @@ static int srp_send_req(struct srp_target_port *target)
 	return status;
 }
 
+static bool srp_change_state(struct srp_target_port *target,
+			     enum srp_target_state old,
+			     enum srp_target_state new)
+{
+	bool changed = false;
+
+	BUG_ON(old == SRP_TARGET_REMOVED);
+
+	spin_lock_irq(&target->lock);
+	if (target->state == old) {
+		target->state = new;
+		changed = true;
+	}
+	spin_unlock_irq(&target->lock);
+
+	return changed;
+}
+
 static bool srp_queue_remove_work(struct srp_target_port *target)
 {
 	bool changed = false;
@@ -523,16 +541,26 @@ static void srp_del_scsi_host_attr(struct Scsi_Host *shost)
 
 static void srp_remove_target(struct srp_target_port *target)
 {
+	struct Scsi_Host *shost = target->scsi_host;
+	bool scsi_host_added = false;
+
 	WARN_ON_ONCE(target->state != SRP_TARGET_REMOVED);
 
-	srp_del_scsi_host_attr(target->scsi_host);
-	srp_remove_host(target->scsi_host);
-	scsi_remove_host(target->scsi_host);
+	mutex_lock(&target->mutex);
+	swap(target->scsi_host_added, scsi_host_added);
+	mutex_unlock(&target->mutex);
+
+	if (scsi_host_added) {
+		srp_del_scsi_host_attr(shost);
+		srp_remove_host(shost);
+		scsi_remove_host(shost);
+	}
+
 	srp_disconnect_target(target);
 	ib_destroy_cm_id(target->cm_id);
 	srp_free_target_ib(target);
 	srp_free_req_data(target);
-	scsi_host_put(target->scsi_host);
+	scsi_host_put(shost);
 }
 
 static void srp_remove_work(struct work_struct *work)
@@ -554,6 +582,30 @@ static void srp_rport_delete(struct srp_rport *rport)
 	struct srp_target_port *target = rport->lld_data;
 
 	srp_queue_remove_work(target);
+}
+
+/**
+ * srp_conn_unique() - Check whether the connection to a target is unique.
+ */
+static bool srp_conn_unique(struct srp_host *host,
+			    struct srp_target_port *target)
+{
+	struct srp_target_port *t;
+	bool ret = true;
+
+	spin_lock(&host->target_lock);
+	list_for_each_entry(t, &host->target_list, list) {
+		if (t != target &&
+		    target->id_ext == t->id_ext &&
+		    target->ioc_guid == t->ioc_guid &&
+		    target->initiator_ext == t->initiator_ext) {
+			ret = false;
+			break;
+		}
+	}
+	spin_unlock(&host->target_lock);
+
+	return ret;
 }
 
 static int srp_connect_target(struct srp_target_port *target)
@@ -700,12 +752,33 @@ static int srp_reconnect_target(struct srp_target_port *target)
 	struct Scsi_Host *shost = target->scsi_host;
 	int i, ret;
 
-	if (target->state != SRP_TARGET_LIVE)
+	if (!srp_conn_unique(target->srp_host, target) &&
+	    srp_queue_remove_work(target)) {
+		shost_printk(KERN_INFO, target->scsi_host,
+			     PFX "Deleting SCSI host because obsolete\n");
+		return -ENXIO;
+	}
+
+	if (target->state == SRP_TARGET_REMOVED) {
+		shost_printk(KERN_DEBUG, target->scsi_host,
+			     PFX "Removal already scheduled\n");
 		return -EAGAIN;
+	}
 
+	ret = -ENXIO;
+
+	mutex_lock(&target->mutex);
+	if (!target->scsi_host_added) {
+		mutex_unlock(&target->mutex);
+		goto err;
+	}
 	scsi_target_block(&shost->shost_gendev);
+	mutex_unlock(&target->mutex);
 
+	target->reconnecting = true;
 	srp_disconnect_target(target);
+	target->reconnecting = false;
+
 	/*
 	 * Now get a new local CM ID so that we avoid confusing the
 	 * target in case things are really fouled up.
@@ -728,7 +801,9 @@ static int srp_reconnect_target(struct srp_target_port *target)
 	for (i = 0; i < SRP_SQ_SIZE; ++i)
 		list_add(&target->tx_ring[i]->list, &target->free_tx);
 
-	ret = srp_connect_target(target);
+	mutex_lock(&target->mutex);
+	ret = target->scsi_host_added ? srp_connect_target(target) : -ENODEV;
+	mutex_unlock(&target->mutex);
 
 unblock:
 	scsi_target_unblock(&shost->shost_gendev, ret == 0 ? SDEV_RUNNING :
@@ -1668,6 +1743,9 @@ static int srp_cm_handler(struct ib_cm_id *cm_id, struct ib_cm_event *event)
 		shost_printk(KERN_ERR, target->scsi_host,
 			     PFX "connection closed\n");
 
+		if (!target->reconnecting)
+			srp_queue_remove_work(target);
+
 		target->status = 0;
 		break;
 
@@ -1967,16 +2045,6 @@ static int srp_add_target(struct srp_host *host, struct srp_target_port *target)
 
 	rport->lld_data = target;
 
-	spin_lock(&host->target_lock);
-	list_add_tail(&target->list, &host->target_list);
-	spin_unlock(&host->target_lock);
-
-	target->state = SRP_TARGET_LIVE;
-	target->connected = false;
-
-	scsi_scan_target(&target->scsi_host->shost_gendev,
-			 0, target->scsi_id, SCAN_WILD_CARD, 0);
-
 	return 0;
 }
 
@@ -2262,6 +2330,7 @@ static ssize_t srp_create_target(struct device *dev,
 			     sizeof (struct srp_indirect_buf) +
 			     target->cmd_sg_cnt * sizeof (struct srp_direct_buf);
 
+	mutex_init(&target->mutex);
 	INIT_WORK(&target->remove_work, srp_remove_work);
 	spin_lock_init(&target->lock);
 	INIT_LIST_HEAD(&target->free_tx);
@@ -2307,24 +2376,46 @@ static ssize_t srp_create_target(struct device *dev,
 	if (ret)
 		goto err_free_ib;
 
+	target->connected = false;
+	target->reconnecting = false;
+	target->rq_tmo_jiffies = 1 * HZ;
+	target->state = SRP_TARGET_CONNECTING;
+	target->scsi_host_added = false;
+
+	mutex_lock(&target->mutex);
+	spin_lock(&host->target_lock);
+	list_add_tail(&target->list, &host->target_list);
+	spin_unlock(&host->target_lock);
+
+	if (!srp_change_state(target, SRP_TARGET_CONNECTING, SRP_TARGET_LIVE)) {
+		ret = -ENOENT;
+		goto err_unlock_remove;
+	}
+
 	ret = srp_connect_target(target);
 	if (ret) {
 		shost_printk(KERN_ERR, target->scsi_host,
 			     PFX "Connection failed\n");
-		goto err_cm_id;
+		goto err_unlock_remove;
 	}
 
 	ret = srp_add_target(host, target);
 	if (ret)
-		goto err_disconnect;
+		goto err_unlock_remove;
+
+	target->scsi_host_added = true;
+	scsi_scan_target(&target->scsi_host->shost_gendev, 0,
+			 target->scsi_id, SCAN_WILD_CARD, 0);
+	mutex_unlock(&target->mutex);
 
 	return count;
 
-err_disconnect:
-	srp_disconnect_target(target);
-
-err_cm_id:
-	ib_destroy_cm_id(target->cm_id);
+err_unlock_remove:
+	if (srp_queue_remove_work(target))
+		shost_printk(KERN_INFO, target->scsi_host,
+			     PFX "deleting SCSI host (ret = %d).\n", ret);
+	mutex_unlock(&target->mutex);
+	return ret;
 
 err_free_ib:
 	srp_free_target_ib(target);
