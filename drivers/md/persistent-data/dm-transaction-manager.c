@@ -7,11 +7,11 @@
 #include "dm-space-map.h"
 #include "dm-space-map-disk.h"
 #include "dm-space-map-metadata.h"
-#include "dm-persistent-data-internal.h"
 
 #include <linux/export.h>
 #include <linux/slab.h>
 #include <linux/device-mapper.h>
+#include <linux/hashtable.h>
 
 #define DM_MSG_PREFIX "transaction manager"
 
@@ -25,8 +25,7 @@ struct shadow_info {
 /*
  * It would be nice if we scaled with the size of transaction.
  */
-#define HASH_SIZE 256
-#define HASH_MASK (HASH_SIZE - 1)
+#define DM_HASH_BITS 8
 
 struct dm_transaction_manager {
 	int is_clone;
@@ -36,7 +35,7 @@ struct dm_transaction_manager {
 	struct dm_space_map *sm;
 
 	spinlock_t lock;
-	struct hlist_head buckets[HASH_SIZE];
+	DEFINE_HASHTABLE(hash, DM_HASH_BITS);
 };
 
 /*----------------------------------------------------------------*/
@@ -44,12 +43,11 @@ struct dm_transaction_manager {
 static int is_shadow(struct dm_transaction_manager *tm, dm_block_t b)
 {
 	int r = 0;
-	unsigned bucket = dm_hash_block(b, HASH_MASK);
 	struct shadow_info *si;
 	struct hlist_node *n;
 
 	spin_lock(&tm->lock);
-	hlist_for_each_entry(si, n, tm->buckets + bucket, hlist)
+	hash_for_each_possible(tm->hash, si, n, hlist, b)
 		if (si->where == b) {
 			r = 1;
 			break;
@@ -65,15 +63,13 @@ static int is_shadow(struct dm_transaction_manager *tm, dm_block_t b)
  */
 static void insert_shadow(struct dm_transaction_manager *tm, dm_block_t b)
 {
-	unsigned bucket;
 	struct shadow_info *si;
 
 	si = kmalloc(sizeof(*si), GFP_NOIO);
 	if (si) {
 		si->where = b;
-		bucket = dm_hash_block(b, HASH_MASK);
 		spin_lock(&tm->lock);
-		hlist_add_head(&si->hlist, tm->buckets + bucket);
+		hash_add(tm->hash, &si->hlist, b);
 		spin_unlock(&tm->lock);
 	}
 }
@@ -82,18 +78,12 @@ static void wipe_shadow_table(struct dm_transaction_manager *tm)
 {
 	struct shadow_info *si;
 	struct hlist_node *n, *tmp;
-	struct hlist_head *bucket;
 	int i;
 
 	spin_lock(&tm->lock);
-	for (i = 0; i < HASH_SIZE; i++) {
-		bucket = tm->buckets + i;
-		hlist_for_each_entry_safe(si, n, tmp, bucket, hlist)
-			kfree(si);
-
-		INIT_HLIST_HEAD(bucket);
-	}
-
+	hash_for_each_safe(tm->hash, i, n, tmp, si, hlist)
+		kfree(si);
+	hash_init(tm->hash);
 	spin_unlock(&tm->lock);
 }
 
@@ -102,7 +92,6 @@ static void wipe_shadow_table(struct dm_transaction_manager *tm)
 static struct dm_transaction_manager *dm_tm_create(struct dm_block_manager *bm,
 						   struct dm_space_map *sm)
 {
-	int i;
 	struct dm_transaction_manager *tm;
 
 	tm = kmalloc(sizeof(*tm), GFP_KERNEL);
@@ -115,8 +104,7 @@ static struct dm_transaction_manager *dm_tm_create(struct dm_block_manager *bm,
 	tm->sm = sm;
 
 	spin_lock_init(&tm->lock);
-	for (i = 0; i < HASH_SIZE; i++)
-		INIT_HLIST_HEAD(tm->buckets + i);
+	hash_init(tm->hash);
 
 	return tm;
 }

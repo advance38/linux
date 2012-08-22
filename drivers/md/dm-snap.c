@@ -34,9 +34,7 @@ static const char dm_snapshot_merge_target_name[] = "snapshot-merge";
  */
 #define MIN_IOS 256
 
-#define DM_TRACKED_CHUNK_HASH_SIZE	16
-#define DM_TRACKED_CHUNK_HASH(x)	((unsigned long)(x) & \
-					 (DM_TRACKED_CHUNK_HASH_SIZE - 1))
+#define DM_TRACKED_CHUNK_HASH_BITS	4
 
 struct dm_exception_table {
 	uint32_t hash_mask;
@@ -80,7 +78,7 @@ struct dm_snapshot {
 	/* Chunks with outstanding reads */
 	spinlock_t tracked_chunk_lock;
 	mempool_t *tracked_chunk_pool;
-	struct hlist_head tracked_chunk_hash[DM_TRACKED_CHUNK_HASH_SIZE];
+	DEFINE_HASHTABLE(tracked_chunk_hash, DM_TRACKED_CHUNK_HASH_BITS);
 
 	/* The on disk metadata handler */
 	struct dm_exception_store *store;
@@ -203,8 +201,7 @@ static struct dm_snap_tracked_chunk *track_chunk(struct dm_snapshot *s,
 	c->chunk = chunk;
 
 	spin_lock_irqsave(&s->tracked_chunk_lock, flags);
-	hlist_add_head(&c->node,
-		       &s->tracked_chunk_hash[DM_TRACKED_CHUNK_HASH(chunk)]);
+	hash_add(s->tracked_chunk_hash, &c->node, chunk);
 	spin_unlock_irqrestore(&s->tracked_chunk_lock, flags);
 
 	return c;
@@ -216,7 +213,7 @@ static void stop_tracking_chunk(struct dm_snapshot *s,
 	unsigned long flags;
 
 	spin_lock_irqsave(&s->tracked_chunk_lock, flags);
-	hlist_del(&c->node);
+	hash_del(&c->node);
 	spin_unlock_irqrestore(&s->tracked_chunk_lock, flags);
 
 	mempool_free(c, s->tracked_chunk_pool);
@@ -230,8 +227,7 @@ static int __chunk_is_tracked(struct dm_snapshot *s, chunk_t chunk)
 
 	spin_lock_irq(&s->tracked_chunk_lock);
 
-	hlist_for_each_entry(c, hn,
-	    &s->tracked_chunk_hash[DM_TRACKED_CHUNK_HASH(chunk)], node) {
+	hash_for_each_possible(s->tracked_chunk_hash, c, hn, node, chunk) {
 		if (c->chunk == chunk) {
 			found = 1;
 			break;
@@ -1033,7 +1029,6 @@ static void stop_merge(struct dm_snapshot *s)
 static int snapshot_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 {
 	struct dm_snapshot *s;
-	int i;
 	int r = -EINVAL;
 	char *origin_path, *cow_path;
 	unsigned args_used, num_flush_requests = 1;
@@ -1128,8 +1123,7 @@ static int snapshot_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto bad_tracked_chunk_pool;
 	}
 
-	for (i = 0; i < DM_TRACKED_CHUNK_HASH_SIZE; i++)
-		INIT_HLIST_HEAD(&s->tracked_chunk_hash[i]);
+	hash_init(s->tracked_chunk_hash);
 
 	spin_lock_init(&s->tracked_chunk_lock);
 
@@ -1253,9 +1247,6 @@ static void __handover_exceptions(struct dm_snapshot *snap_src,
 
 static void snapshot_dtr(struct dm_target *ti)
 {
-#ifdef CONFIG_DM_DEBUG
-	int i;
-#endif
 	struct dm_snapshot *s = ti->private;
 	struct dm_snapshot *snap_src = NULL, *snap_dest = NULL;
 
@@ -1286,8 +1277,7 @@ static void snapshot_dtr(struct dm_target *ti)
 	smp_mb();
 
 #ifdef CONFIG_DM_DEBUG
-	for (i = 0; i < DM_TRACKED_CHUNK_HASH_SIZE; i++)
-		BUG_ON(!hlist_empty(&s->tracked_chunk_hash[i]));
+	BUG_ON(!hash_empty(s->tracked_chunk_hash));
 #endif
 
 	mempool_destroy(s->tracked_chunk_pool);

@@ -4,7 +4,6 @@
  * This file is released under the GPL.
  */
 #include "dm-block-manager.h"
-#include "dm-persistent-data-internal.h"
 #include "../dm-bufio.h"
 
 #include <linux/crc32c.h>
