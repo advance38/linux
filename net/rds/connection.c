@@ -34,28 +34,24 @@
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/export.h>
+#include <linux/hashtable.h>
 #include <net/inet_hashtables.h>
 
 #include "rds.h"
 #include "loop.h"
 
 #define RDS_CONNECTION_HASH_BITS 12
-#define RDS_CONNECTION_HASH_ENTRIES (1 << RDS_CONNECTION_HASH_BITS)
-#define RDS_CONNECTION_HASH_MASK (RDS_CONNECTION_HASH_ENTRIES - 1)
 
 /* converting this to RCU is a chore for another day.. */
 static DEFINE_SPINLOCK(rds_conn_lock);
 static unsigned long rds_conn_count;
-static struct hlist_head rds_conn_hash[RDS_CONNECTION_HASH_ENTRIES];
+static DEFINE_HASHTABLE(rds_conn_hash, RDS_CONNECTION_HASH_BITS);
 static struct kmem_cache *rds_conn_slab;
 
-static struct hlist_head *rds_conn_bucket(__be32 laddr, __be32 faddr)
+static unsigned long rds_conn_hashfn(__be32 laddr, __be32 faddr)
 {
 	/* Pass NULL, don't need struct net for hash */
-	unsigned long hash = inet_ehashfn(NULL,
-					  be32_to_cpu(laddr), 0,
-					  be32_to_cpu(faddr), 0);
-	return &rds_conn_hash[hash & RDS_CONNECTION_HASH_MASK];
+	return inet_ehashfn(NULL,  be32_to_cpu(laddr), 0,  be32_to_cpu(faddr), 0);
 }
 
 #define rds_conn_info_set(var, test, suffix) do {		\
@@ -64,14 +60,14 @@ static struct hlist_head *rds_conn_bucket(__be32 laddr, __be32 faddr)
 } while (0)
 
 /* rcu read lock must be held or the connection spinlock */
-static struct rds_connection *rds_conn_lookup(struct hlist_head *head,
-					      __be32 laddr, __be32 faddr,
+static struct rds_connection *rds_conn_lookup(__be32 laddr, __be32 faddr,
 					      struct rds_transport *trans)
 {
 	struct rds_connection *conn, *ret = NULL;
 	struct hlist_node *pos;
+	unsigned long key = rds_conn_hashfn(laddr, faddr);
 
-	hlist_for_each_entry_rcu(conn, pos, head, c_hash_node) {
+	hash_for_each_possible_rcu(rds_conn_hash, conn, pos, c_hash_node, key) {
 		if (conn->c_faddr == faddr && conn->c_laddr == laddr &&
 				conn->c_trans == trans) {
 			ret = conn;
@@ -117,13 +113,12 @@ static struct rds_connection *__rds_conn_create(__be32 laddr, __be32 faddr,
 				       int is_outgoing)
 {
 	struct rds_connection *conn, *parent = NULL;
-	struct hlist_head *head = rds_conn_bucket(laddr, faddr);
 	struct rds_transport *loop_trans;
 	unsigned long flags;
 	int ret;
 
 	rcu_read_lock();
-	conn = rds_conn_lookup(head, laddr, faddr, trans);
+	conn = rds_conn_lookup(laddr, faddr, trans);
 	if (conn && conn->c_loopback && conn->c_trans != &rds_loop_transport &&
 	    !is_outgoing) {
 		/* This is a looped back IB connection, and we're
@@ -224,13 +219,15 @@ static struct rds_connection *__rds_conn_create(__be32 laddr, __be32 faddr,
 		/* Creating normal conn */
 		struct rds_connection *found;
 
-		found = rds_conn_lookup(head, laddr, faddr, trans);
+		found = rds_conn_lookup(laddr, faddr, trans);
 		if (found) {
 			trans->conn_free(conn->c_transport_data);
 			kmem_cache_free(rds_conn_slab, conn);
 			conn = found;
 		} else {
-			hlist_add_head_rcu(&conn->c_hash_node, head);
+			unsigned long key = rds_conn_hashfn(laddr, faddr);
+
+			hash_add_rcu(rds_conn_hash, &conn->c_hash_node, key);
 			rds_cong_add_conn(conn);
 			rds_conn_count++;
 		}
@@ -303,7 +300,7 @@ void rds_conn_shutdown(struct rds_connection *conn)
 	 * conn - the reconnect is always triggered by the active peer. */
 	cancel_delayed_work_sync(&conn->c_conn_w);
 	rcu_read_lock();
-	if (!hlist_unhashed(&conn->c_hash_node)) {
+	if (hash_hashed(&conn->c_hash_node)) {
 		rcu_read_unlock();
 		rds_queue_reconnect(conn);
 	} else {
@@ -329,7 +326,7 @@ void rds_conn_destroy(struct rds_connection *conn)
 
 	/* Ensure conn will not be scheduled for reconnect */
 	spin_lock_irq(&rds_conn_lock);
-	hlist_del_init_rcu(&conn->c_hash_node);
+	hash_del(&conn->c_hash_node);
 	spin_unlock_irq(&rds_conn_lock);
 	synchronize_rcu();
 
@@ -375,7 +372,6 @@ static void rds_conn_message_info(struct socket *sock, unsigned int len,
 				  struct rds_info_lengths *lens,
 				  int want_send)
 {
-	struct hlist_head *head;
 	struct hlist_node *pos;
 	struct list_head *list;
 	struct rds_connection *conn;
@@ -388,27 +384,24 @@ static void rds_conn_message_info(struct socket *sock, unsigned int len,
 
 	rcu_read_lock();
 
-	for (i = 0, head = rds_conn_hash; i < ARRAY_SIZE(rds_conn_hash);
-	     i++, head++) {
-		hlist_for_each_entry_rcu(conn, pos, head, c_hash_node) {
-			if (want_send)
-				list = &conn->c_send_queue;
-			else
-				list = &conn->c_retrans;
+	hash_for_each_rcu(rds_conn_hash, i, pos, conn, c_hash_node) {
+		if (want_send)
+			list = &conn->c_send_queue;
+		else
+			list = &conn->c_retrans;
 
-			spin_lock_irqsave(&conn->c_lock, flags);
+		spin_lock_irqsave(&conn->c_lock, flags);
 
-			/* XXX too lazy to maintain counts.. */
-			list_for_each_entry(rm, list, m_conn_item) {
-				total++;
-				if (total <= len)
-					rds_inc_info_copy(&rm->m_inc, iter,
-							  conn->c_laddr,
-							  conn->c_faddr, 0);
-			}
-
-			spin_unlock_irqrestore(&conn->c_lock, flags);
+		/* XXX too lazy to maintain counts.. */
+		list_for_each_entry(rm, list, m_conn_item) {
+			total++;
+			if (total <= len)
+				rds_inc_info_copy(&rm->m_inc, iter,
+						  conn->c_laddr,
+						  conn->c_faddr, 0);
 		}
+
+		spin_unlock_irqrestore(&conn->c_lock, flags);
 	}
 	rcu_read_unlock();
 
@@ -438,7 +431,6 @@ void rds_for_each_conn_info(struct socket *sock, unsigned int len,
 			  size_t item_len)
 {
 	uint64_t buffer[(item_len + 7) / 8];
-	struct hlist_head *head;
 	struct hlist_node *pos;
 	struct rds_connection *conn;
 	size_t i;
@@ -448,23 +440,19 @@ void rds_for_each_conn_info(struct socket *sock, unsigned int len,
 	lens->nr = 0;
 	lens->each = item_len;
 
-	for (i = 0, head = rds_conn_hash; i < ARRAY_SIZE(rds_conn_hash);
-	     i++, head++) {
-		hlist_for_each_entry_rcu(conn, pos, head, c_hash_node) {
+	hash_for_each_rcu(rds_conn_hash, i, pos, conn, c_hash_node) {
+		/* XXX no c_lock usage.. */
+		if (!visitor(conn, buffer))
+			continue;
 
-			/* XXX no c_lock usage.. */
-			if (!visitor(conn, buffer))
-				continue;
-
-			/* We copy as much as we can fit in the buffer,
-			 * but we count all items so that the caller
-			 * can resize the buffer. */
-			if (len >= item_len) {
-				rds_info_copy(iter, buffer, item_len);
-				len -= item_len;
-			}
-			lens->nr++;
+		/* We copy as much as we can fit in the buffer,
+		 * but we count all items so that the caller
+		 * can resize the buffer. */
+		if (len >= item_len) {
+			rds_info_copy(iter, buffer, item_len);
+			len -= item_len;
 		}
+		lens->nr++;
 	}
 	rcu_read_unlock();
 }
@@ -518,14 +506,14 @@ int rds_conn_init(void)
 	rds_info_register_func(RDS_INFO_RETRANS_MESSAGES,
 			       rds_conn_message_info_retrans);
 
+	hash_init(rds_conn_hash);
+
 	return 0;
 }
 
 void rds_conn_exit(void)
 {
 	rds_loop_exit();
-
-	WARN_ON(!hlist_empty(rds_conn_hash));
 
 	kmem_cache_destroy(rds_conn_slab);
 

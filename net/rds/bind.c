@@ -36,16 +36,16 @@
 #include <linux/if_arp.h>
 #include <linux/jhash.h>
 #include <linux/ratelimit.h>
+#include <linux/hashtable.h>
 #include "rds.h"
 
-#define BIND_HASH_SIZE 1024
-static struct hlist_head bind_hash_table[BIND_HASH_SIZE];
+#define BIND_HASH_BITS 10
+static DEFINE_HASHTABLE(bind_hash_table, BIND_HASH_BITS);
 static DEFINE_SPINLOCK(rds_bind_lock);
 
-static struct hlist_head *hash_to_bucket(__be32 addr, __be16 port)
+static u32 rds_hash(__be32 addr, __be16 port)
 {
-	return bind_hash_table + (jhash_2words((u32)addr, (u32)port, 0) &
-				  (BIND_HASH_SIZE - 1));
+	return jhash_2words((u32)addr, (u32)port, 0);
 }
 
 static struct rds_sock *rds_bind_lookup(__be32 addr, __be16 port,
@@ -53,12 +53,12 @@ static struct rds_sock *rds_bind_lookup(__be32 addr, __be16 port,
 {
 	struct rds_sock *rs;
 	struct hlist_node *node;
-	struct hlist_head *head = hash_to_bucket(addr, port);
+	u32 key = rds_hash(addr, port);
 	u64 cmp;
 	u64 needle = ((u64)be32_to_cpu(addr) << 32) | be16_to_cpu(port);
 
 	rcu_read_lock();
-	hlist_for_each_entry_rcu(rs, node, head, rs_bound_node) {
+	hash_for_each_possible_rcu(bind_hash_table, rs, node, rs_bound_node, key) {
 		cmp = ((u64)be32_to_cpu(rs->rs_bound_addr) << 32) |
 		      be16_to_cpu(rs->rs_bound_port);
 
@@ -74,13 +74,13 @@ static struct rds_sock *rds_bind_lookup(__be32 addr, __be16 port,
 		 * make sure our addr and port are set before
 		 * we are added to the list, other people
 		 * in rcu will find us as soon as the
-		 * hlist_add_head_rcu is done
+		 * hash_add_rcu is done
 		 */
 		insert->rs_bound_addr = addr;
 		insert->rs_bound_port = port;
 		rds_sock_addref(insert);
 
-		hlist_add_head_rcu(&insert->rs_bound_node, head);
+		hash_add_rcu(bind_hash_table, &insert->rs_bound_node, key);
 	}
 	return NULL;
 }
@@ -152,7 +152,7 @@ void rds_remove_bound(struct rds_sock *rs)
 		  rs, &rs->rs_bound_addr,
 		  ntohs(rs->rs_bound_port));
 
-		hlist_del_init_rcu(&rs->rs_bound_node);
+		hash_del_rcu(&rs->rs_bound_node);
 		rds_sock_put(rs);
 		rs->rs_bound_addr = 0;
 	}
@@ -202,3 +202,11 @@ out:
 		synchronize_rcu();
 	return ret;
 }
+
+static int __init rds_init(void)
+{
+	hash_init(bind_hash_table);
+	return 0;
+}
+
+module_init(rds_init);
