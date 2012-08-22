@@ -20,6 +20,7 @@
 #include <linux/lockd/share.h>
 #include <linux/module.h>
 #include <linux/mount.h>
+#include <linux/hashtable.h>
 
 #define NLMDBG_FACILITY		NLMDBG_SVCSUBS
 
@@ -28,8 +29,7 @@
  * Global file hash table
  */
 #define FILE_HASH_BITS		7
-#define FILE_NRHASH		(1<<FILE_HASH_BITS)
-static struct hlist_head	nlm_files[FILE_NRHASH];
+static DEFINE_HASHTABLE(nlm_files, FILE_HASH_BITS);
 static DEFINE_MUTEX(nlm_file_mutex);
 
 #ifdef NFSD_DEBUG
@@ -68,7 +68,7 @@ static inline unsigned int file_hash(struct nfs_fh *f)
 	int i;
 	for (i=0; i<NFS2_FHSIZE;i++)
 		tmp += f->data[i];
-	return tmp & (FILE_NRHASH - 1);
+	return tmp;
 }
 
 /*
@@ -86,17 +86,17 @@ nlm_lookup_file(struct svc_rqst *rqstp, struct nlm_file **result,
 {
 	struct hlist_node *pos;
 	struct nlm_file	*file;
-	unsigned int	hash;
+	unsigned int	key;
 	__be32		nfserr;
 
 	nlm_debug_print_fh("nlm_lookup_file", f);
 
-	hash = file_hash(f);
+	key = file_hash(f);
 
 	/* Lock file table */
 	mutex_lock(&nlm_file_mutex);
 
-	hlist_for_each_entry(file, pos, &nlm_files[hash], f_list)
+	hash_for_each_possible(nlm_files, file, pos, f_list, file_hash(f))
 		if (!nfs_compare_fh(&file->f_handle, f))
 			goto found;
 
@@ -123,7 +123,7 @@ nlm_lookup_file(struct svc_rqst *rqstp, struct nlm_file **result,
 		goto out_free;
 	}
 
-	hlist_add_head(&file->f_list, &nlm_files[hash]);
+	hash_add(nlm_files, &file->f_list, key);
 
 found:
 	dprintk("lockd: found file %p (count %d)\n", file, file->f_count);
@@ -147,8 +147,8 @@ static inline void
 nlm_delete_file(struct nlm_file *file)
 {
 	nlm_debug_print_file("closing file", file);
-	if (!hlist_unhashed(&file->f_list)) {
-		hlist_del(&file->f_list);
+	if (hash_hashed(&file->f_list)) {
+		hash_del(&file->f_list);
 		nlmsvc_ops->fclose(file->f_file);
 		kfree(file);
 	} else {
@@ -253,27 +253,25 @@ nlm_traverse_files(void *data, nlm_host_match_fn_t match,
 	int i, ret = 0;
 
 	mutex_lock(&nlm_file_mutex);
-	for (i = 0; i < FILE_NRHASH; i++) {
-		hlist_for_each_entry_safe(file, pos, next, &nlm_files[i], f_list) {
-			if (is_failover_file && !is_failover_file(data, file))
-				continue;
-			file->f_count++;
-			mutex_unlock(&nlm_file_mutex);
+	hash_for_each_safe(nlm_files, i, pos, next, file, f_list) {
+		if (is_failover_file && !is_failover_file(data, file))
+			continue;
+		file->f_count++;
+		mutex_unlock(&nlm_file_mutex);
 
-			/* Traverse locks, blocks and shares of this file
-			 * and update file->f_locks count */
-			if (nlm_inspect_file(data, file, match))
-				ret = 1;
+		/* Traverse locks, blocks and shares of this file
+		 * and update file->f_locks count */
+		if (nlm_inspect_file(data, file, match))
+			ret = 1;
 
-			mutex_lock(&nlm_file_mutex);
-			file->f_count--;
-			/* No more references to this file. Let go of it. */
-			if (list_empty(&file->f_blocks) && !file->f_locks
-			 && !file->f_shares && !file->f_count) {
-				hlist_del(&file->f_list);
-				nlmsvc_ops->fclose(file->f_file);
-				kfree(file);
-			}
+		mutex_lock(&nlm_file_mutex);
+		file->f_count--;
+		/* No more references to this file. Let go of it. */
+		if (list_empty(&file->f_blocks) && !file->f_locks
+		 && !file->f_shares && !file->f_count) {
+			hash_del(&file->f_list);
+			nlmsvc_ops->fclose(file->f_file);
+			kfree(file);
 		}
 	}
 	mutex_unlock(&nlm_file_mutex);
@@ -451,3 +449,11 @@ nlmsvc_unlock_all_by_ip(struct sockaddr *server_addr)
 	return ret ? -EIO : 0;
 }
 EXPORT_SYMBOL_GPL(nlmsvc_unlock_all_by_ip);
+
+static int __init nlm_init(void)
+{
+	hash_init(nlm_files);
+	return 0;
+}
+
+module_init(nlm_init);
