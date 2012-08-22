@@ -27,6 +27,7 @@
 #include <linux/rcupdate.h>
 #include <linux/rtnetlink.h>
 #include <linux/compat.h>
+#include <linux/hashtable.h>
 
 #include "vport.h"
 #include "vport-internal_dev.h"
@@ -39,8 +40,8 @@ static const struct vport_ops *vport_ops_list[] = {
 };
 
 /* Protected by RCU read lock for reading, RTNL lock for writing. */
-static struct hlist_head *dev_table;
-#define VPORT_HASH_BUCKETS 1024
+#define VPORT_HASH_BITS 10
+static DEFINE_HASHTABLE(dev_table, VPORT_HASH_BITS);
 
 /**
  *	ovs_vport_init - initialize vport subsystem
@@ -49,10 +50,7 @@ static struct hlist_head *dev_table;
  */
 int ovs_vport_init(void)
 {
-	dev_table = kzalloc(VPORT_HASH_BUCKETS * sizeof(struct hlist_head),
-			    GFP_KERNEL);
-	if (!dev_table)
-		return -ENOMEM;
+	hash_init(dev_table);
 
 	return 0;
 }
@@ -67,12 +65,6 @@ void ovs_vport_exit(void)
 	kfree(dev_table);
 }
 
-static struct hlist_head *hash_bucket(const char *name)
-{
-	unsigned int hash = full_name_hash(name, strlen(name));
-	return &dev_table[hash & (VPORT_HASH_BUCKETS - 1)];
-}
-
 /**
  *	ovs_vport_locate - find a port that has already been created
  *
@@ -82,11 +74,11 @@ static struct hlist_head *hash_bucket(const char *name)
  */
 struct vport *ovs_vport_locate(const char *name)
 {
-	struct hlist_head *bucket = hash_bucket(name);
 	struct vport *vport;
 	struct hlist_node *node;
+	int key = full_name_hash(name, strlen(name));
 
-	hlist_for_each_entry_rcu(vport, node, bucket, hash_node)
+	hash_for_each_possible_rcu(dev_table, vport, node, hash_node, key)
 		if (!strcmp(name, vport->ops->get_name(vport)))
 			return vport;
 
@@ -170,14 +162,18 @@ struct vport *ovs_vport_add(const struct vport_parms *parms)
 
 	for (i = 0; i < ARRAY_SIZE(vport_ops_list); i++) {
 		if (vport_ops_list[i]->type == parms->type) {
+			int key;
+			const char *name;
+
 			vport = vport_ops_list[i]->create(parms);
 			if (IS_ERR(vport)) {
 				err = PTR_ERR(vport);
 				goto out;
 			}
 
-			hlist_add_head_rcu(&vport->hash_node,
-					   hash_bucket(vport->ops->get_name(vport)));
+			name = vport->ops->get_name(vport);
+			key = full_name_hash(name, strlen(name));
+			hash_add_rcu(dev_table, &vport->hash_node, key);
 			return vport;
 		}
 	}
@@ -218,7 +214,7 @@ void ovs_vport_del(struct vport *vport)
 {
 	ASSERT_RTNL();
 
-	hlist_del_rcu(&vport->hash_node);
+	hash_del_rcu(&vport->hash_node);
 
 	vport->ops->destroy(vport);
 }
