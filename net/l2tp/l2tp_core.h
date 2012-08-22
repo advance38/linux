@@ -11,17 +11,17 @@
 #ifndef _L2TP_CORE_H_
 #define _L2TP_CORE_H_
 
+#include <linux/hashtable.h>
+
 /* Just some random numbers */
 #define L2TP_TUNNEL_MAGIC	0x42114DDA
 #define L2TP_SESSION_MAGIC	0x0C04EB7D
 
 /* Per tunnel, session hash table size */
 #define L2TP_HASH_BITS	4
-#define L2TP_HASH_SIZE	(1 << L2TP_HASH_BITS)
 
 /* System-wide, session hash table size */
 #define L2TP_HASH_BITS_2	8
-#define L2TP_HASH_SIZE_2	(1 << L2TP_HASH_BITS_2)
 
 /* Debug message categories for the DEBUG socket option */
 enum {
@@ -164,8 +164,8 @@ struct l2tp_tunnel_cfg {
 struct l2tp_tunnel {
 	int			magic;		/* Should be L2TP_TUNNEL_MAGIC */
 	struct rcu_head rcu;
-	rwlock_t		hlist_lock;	/* protect session_hlist */
-	struct hlist_head	session_hlist[L2TP_HASH_SIZE];
+	rwlock_t		hash_lock;	/* protect session_hash */
+	DEFINE_HASHTABLE(session_hash, L2TP_HASH_BITS);
 						/* hashed list of sessions,
 						 * hashed by id */
 	u32			tunnel_id;

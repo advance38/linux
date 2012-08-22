@@ -105,21 +105,16 @@ static void l2tp_dfs_seq_tunnel_show(struct seq_file *m, void *v)
 	int session_count = 0;
 	int hash;
 	struct hlist_node *walk;
-	struct hlist_node *tmp;
+	struct l2tp_session *session;
 
-	read_lock_bh(&tunnel->hlist_lock);
-	for (hash = 0; hash < L2TP_HASH_SIZE; hash++) {
-		hlist_for_each_safe(walk, tmp, &tunnel->session_hlist[hash]) {
-			struct l2tp_session *session;
+	read_lock_bh(&tunnel->hash_lock);
+	hash_for_each(tunnel->session_hash, hash, walk, session, hlist) {
+		if (session->session_id == 0)
+			continue;
 
-			session = hlist_entry(walk, struct l2tp_session, hlist);
-			if (session->session_id == 0)
-				continue;
-
-			session_count++;
-		}
+		session_count++;
 	}
-	read_unlock_bh(&tunnel->hlist_lock);
+	read_unlock_bh(&tunnel->hash_lock);
 
 	seq_printf(m, "\nTUNNEL %u peer %u", tunnel->tunnel_id, tunnel->peer_tunnel_id);
 	if (tunnel->sock) {
