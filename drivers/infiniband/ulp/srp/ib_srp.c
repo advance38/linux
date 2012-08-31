@@ -291,10 +291,16 @@ static void srp_free_target_ib(struct srp_target_port *target)
 	ib_destroy_cq(target->send_cq);
 	ib_destroy_cq(target->recv_cq);
 
-	for (i = 0; i < SRP_RQ_SIZE; ++i)
+	mutex_lock(&target->mutex);
+	for (i = 0; i < SRP_RQ_SIZE; ++i) {
 		srp_free_iu(target->srp_host, target->rx_ring[i]);
-	for (i = 0; i < SRP_SQ_SIZE; ++i)
+		target->rx_ring[i] = NULL;
+	}
+	for (i = 0; i < SRP_SQ_SIZE; ++i) {
 		srp_free_iu(target->srp_host, target->tx_ring[i]);
+		target->tx_ring[i] = NULL;
+	}
+	mutex_unlock(&target->mutex);
 }
 
 static void srp_path_rec_completion(int status,
