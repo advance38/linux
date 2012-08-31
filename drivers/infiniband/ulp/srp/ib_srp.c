@@ -534,7 +534,6 @@ static void srp_wait_last_send_wqe(struct srp_target_port *target)
 		msleep(20);
 	}
 
-	WARN_ON(!target->last_send_wqe);
 }
 
 static void srp_disconnect_target(struct srp_target_port *target)
