@@ -272,6 +272,12 @@ static void rport_dev_loss_timedout(struct work_struct *work)
 	struct Scsi_Host *shost;
 	struct srp_internal *i;
 
+	if (!rport->lld_data) {
+		pr_warn("skipping rport_delete, rport->lld_data=%p\n",
+			rport->lld_data);
+		return;
+	}
+
 	pr_err("SRP transport: dev_loss_tmo (%ds) expired - removing %s.\n",
 	       rport->dev_loss_tmo, dev_name(&rport->dev));
 

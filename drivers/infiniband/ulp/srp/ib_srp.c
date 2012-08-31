@@ -647,9 +647,19 @@ static void srp_remove_work(struct work_struct *work)
 
 static void srp_rport_delete(struct srp_rport *rport)
 {
-	struct srp_target_port *target = rport->lld_data;
+	struct srp_target_port *target;
+
+	if (!rport->lld_data) {
+		pr_warn("skipping srp_rport_delete. rport->lld_data=%p\n",
+			rport->lld_data);
+		return;
+	}
+
+	target = rport->lld_data;
 
 	srp_queue_remove_work(target);
+
+	rport->lld_data = NULL;
 }
 
 /**
