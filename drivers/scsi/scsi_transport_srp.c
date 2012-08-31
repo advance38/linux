@@ -242,7 +242,7 @@ static void rport_fast_io_fail_timedout(struct work_struct *work)
 {
 	struct srp_rport *rport =
 		container_of(to_delayed_work(work), struct srp_rport,
-			     fast_io_fail_work);
+			     dev_loss_work);
 	struct Scsi_Host *shost;
 	struct srp_internal *i;
 
