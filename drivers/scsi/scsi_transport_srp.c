@@ -407,12 +407,15 @@ struct srp_rport *srp_rport_add(struct Scsi_Host *shost,
 
 	transport_setup_device(&rport->dev);
 
+	mutex_lock(&shost->scan_mutex);
 	ret = device_add(&rport->dev);
 	if (ret) {
+		mutex_unlock(&shost->scan_mutex);
 		transport_destroy_device(&rport->dev);
 		put_device(&rport->dev);
 		return ERR_PTR(ret);
 	}
+	mutex_unlock(&shost->scan_mutex);
 
 	if (shost->active_mode & MODE_TARGET &&
 	    ids->roles == SRP_RPORT_ROLE_INITIATOR) {
