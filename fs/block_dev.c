@@ -1599,13 +1599,12 @@ ssize_t blkdev_aio_read(struct kiocb *iocb, const struct iovec *iov,
 {
 	ssize_t ret;
 	struct block_device *bdev = I_BDEV(iocb->ki_filp->f_mapping->host);
-	percpu_rwsem_ptr p;
 
-	p = percpu_down_read(&bdev->bd_block_size_semaphore);
+	percpu_down_read(&bdev->bd_block_size_semaphore);
 
 	ret = generic_file_aio_read(iocb, iov, nr_segs, pos);
 
-	percpu_up_read(&bdev->bd_block_size_semaphore, p);
+	percpu_up_read(&bdev->bd_block_size_semaphore);
 
 	return ret;
 }
@@ -1625,11 +1624,10 @@ ssize_t blkdev_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	struct blk_plug plug;
 	struct block_device *bdev = I_BDEV(file->f_mapping->host);
 	ssize_t ret;
-	percpu_rwsem_ptr p;
 
 	BUG_ON(iocb->ki_pos != pos);
 
-	p = percpu_down_read(&bdev->bd_block_size_semaphore);
+	percpu_down_read(&bdev->bd_block_size_semaphore);
 
 	blk_start_plug(&plug);
 	ret = __generic_file_aio_write(iocb, iov, nr_segs, &iocb->ki_pos);
@@ -1642,7 +1640,7 @@ ssize_t blkdev_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	}
 	blk_finish_plug(&plug);
 
-	percpu_up_read(&bdev->bd_block_size_semaphore, p);
+	percpu_up_read(&bdev->bd_block_size_semaphore);
 
 	return ret;
 }
@@ -1652,13 +1650,12 @@ int blkdev_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	int ret;
 	struct block_device *bdev = I_BDEV(file->f_mapping->host);
-	percpu_rwsem_ptr p;
 
-	p = percpu_down_read(&bdev->bd_block_size_semaphore);
+	percpu_down_read(&bdev->bd_block_size_semaphore);
 
 	ret = generic_file_mmap(file, vma);
 
-	percpu_up_read(&bdev->bd_block_size_semaphore, p);
+	percpu_up_read(&bdev->bd_block_size_semaphore);
 
 	return ret;
 }
