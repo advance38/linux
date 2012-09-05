@@ -66,6 +66,8 @@ static unsigned int cmd_sg_entries;
 static unsigned int indirect_sg_entries;
 static bool allow_ext_sg;
 static int topspin_workarounds = 1;
+static unsigned int cma_cm_response_timeout = CMA_CM_RESPONSE_TIMEOUT;
+static unsigned int cma_max_cm_retries = CMA_MAX_CM_RETRIES;
 
 module_param(srp_sg_tablesize, uint, 0444);
 MODULE_PARM_DESC(srp_sg_tablesize, "Deprecated name for cmd_sg_entries");
@@ -85,6 +87,12 @@ MODULE_PARM_DESC(allow_ext_sg,
 module_param(topspin_workarounds, int, 0444);
 MODULE_PARM_DESC(topspin_workarounds,
 		 "Enable workarounds for Topspin/Cisco SRP target bugs if != 0");
+
+module_param(cma_cm_response_timeout, uint, 0444);
+MODULE_PARM_DESC(cma_cm_response_timeout, "Response timeout for the RDMA Connection Manager. (default is 20)");
+
+module_param(cma_max_cm_retries, uint, 0444);
+MODULE_PARM_DESC(cma_max_cm_retries, "Max number of retries for the RDMA Connection Manager. (default is 15)");
 
 static void srp_add_one(struct ib_device *device);
 static void srp_remove_one(struct ib_device *device);
@@ -378,11 +386,11 @@ static int srp_send_req(struct srp_target_port *target)
 	 * module parameters if anyone cared about setting them.
 	 */
 	req->param.responder_resources	      = 4;
-	req->param.remote_cm_response_timeout = 20;
-	req->param.local_cm_response_timeout  = 20;
+	req->param.remote_cm_response_timeout = cma_cm_response_timeout;
+	req->param.local_cm_response_timeout  = cma_cm_response_timeout;
 	req->param.retry_count 		      = 7;
 	req->param.rnr_retry_count 	      = 7;
-	req->param.max_cm_retries 	      = 15;
+	req->param.max_cm_retries 	      = cma_max_cm_retries;
 
 	req->priv.opcode     	= SRP_LOGIN_REQ;
 	req->priv.tag        	= 0;

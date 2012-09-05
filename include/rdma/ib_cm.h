@@ -274,6 +274,9 @@ struct ib_cm_event {
 #define CM_LAP_ATTR_ID		cpu_to_be16(0x0019)
 #define CM_APR_ATTR_ID		cpu_to_be16(0x001A)
 
+#define CMA_CM_RESPONSE_TIMEOUT	20
+#define CMA_MAX_CM_RETRIES	15
+
 /**
  * ib_cm_handler - User-defined callback to process communication events.
  * @cm_id: Communication identifier associated with the reported event.

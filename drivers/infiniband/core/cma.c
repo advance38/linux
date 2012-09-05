@@ -59,10 +59,17 @@ MODULE_AUTHOR("Sean Hefty");
 MODULE_DESCRIPTION("Generic RDMA CM Agent");
 MODULE_LICENSE("Dual BSD/GPL");
 
-#define CMA_CM_RESPONSE_TIMEOUT 20
-#define CMA_MAX_CM_RETRIES 15
 #define CMA_CM_MRA_SETTING (IB_CM_MRA_FLAG_DELAY | 24)
 #define CMA_IBOE_PACKET_LIFETIME 18
+
+static unsigned int cma_cm_response_timeout = CMA_CM_RESPONSE_TIMEOUT;
+static unsigned int cma_max_cm_retries = CMA_MAX_CM_RETRIES;
+
+module_param(cma_cm_response_timeout, uint, 0444);
+MODULE_PARM_DESC(cma_cm_response_timeout, "Response timeout for the RDMA Connection Manager. (default is 20)");
+
+module_param(cma_max_cm_retries, uint, 0444);
+MODULE_PARM_DESC(cma_max_cm_retries, "Max number of retries for the RDMA Connection Manager. (default is 15)");
 
 static void cma_add_one(struct ib_device *device);
 static void cma_remove_one(struct ib_device *device);
@@ -2587,8 +2594,8 @@ static int cma_resolve_ib_udp(struct rdma_id_private *id_priv,
 	req.path = route->path_rec;
 	req.service_id = cma_get_service_id(id_priv->id.ps,
 					    (struct sockaddr *) &route->addr.dst_addr);
-	req.timeout_ms = 1 << (CMA_CM_RESPONSE_TIMEOUT - 8);
-	req.max_cm_retries = CMA_MAX_CM_RETRIES;
+	req.timeout_ms = 1 << (cma_cm_response_timeout - 8);
+	req.max_cm_retries = cma_max_cm_retries;
 
 	ret = ib_send_cm_sidr_req(id_priv->cm_id.ib, &req);
 	if (ret) {
@@ -2650,9 +2657,9 @@ static int cma_connect_ib(struct rdma_id_private *id_priv,
 	req.flow_control = conn_param->flow_control;
 	req.retry_count = conn_param->retry_count;
 	req.rnr_retry_count = conn_param->rnr_retry_count;
-	req.remote_cm_response_timeout = CMA_CM_RESPONSE_TIMEOUT;
-	req.local_cm_response_timeout = CMA_CM_RESPONSE_TIMEOUT;
-	req.max_cm_retries = CMA_MAX_CM_RETRIES;
+	req.remote_cm_response_timeout = cma_cm_response_timeout;
+	req.local_cm_response_timeout = cma_cm_response_timeout;
+	req.max_cm_retries = cma_max_cm_retries;
 	req.srq = id_priv->srq ? 1 : 0;
 
 	ret = ib_send_cm_req(id_priv->cm_id.ib, &req);

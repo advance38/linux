@@ -56,6 +56,15 @@ MODULE_PARM_DESC(cm_data_debug_level,
 		 "Enable data path debug tracing for connected mode if > 0");
 #endif
 
+static unsigned int cma_cm_response_timeout = CMA_CM_RESPONSE_TIMEOUT;
+static unsigned int cma_max_cm_retries = CMA_MAX_CM_RETRIES;
+
+module_param(cma_cm_response_timeout, uint, 0444);
+MODULE_PARM_DESC(cma_cm_response_timeout, "Response timeout for the RDMA Connection Manager. (default is 20)");
+
+module_param(cma_max_cm_retries, uint, 0444);
+MODULE_PARM_DESC(cma_max_cm_retries, "Max number of retries for the RDMA Connection Manager. (default is 15)");
+
 #define IPOIB_CM_IETF_ID 0x1000000000000000ULL
 
 #define IPOIB_CM_RX_UPDATE_TIME (256 * HZ)
@@ -1055,11 +1064,11 @@ static int ipoib_cm_send_req(struct net_device *dev,
 	 * module parameters if anyone cared about setting them.
 	 */
 	req.responder_resources		= 4;
-	req.remote_cm_response_timeout	= 20;
-	req.local_cm_response_timeout	= 20;
+	req.remote_cm_response_timeout	= cma_cm_response_timeout;
+	req.local_cm_response_timeout	= cma_cm_response_timeout;
 	req.retry_count			= 0; /* RFC draft warns against retries */
 	req.rnr_retry_count		= 0; /* RFC draft warns against retries */
-	req.max_cm_retries		= 15;
+	req.max_cm_retries		= cma_max_cm_retries;
 	req.srq				= ipoib_cm_has_srq(dev);
 	return ib_send_cm_req(id, &req);
 }
