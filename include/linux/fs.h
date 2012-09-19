@@ -724,7 +724,7 @@ struct block_device {
 	int			bd_fsfreeze_count;
 	/* Mutex for freeze */
 	struct mutex		bd_fsfreeze_mutex;
-};
+} __cacheline_aligned;
 
 /*
  * Radix-tree tags, for tagging dirty and writeback pages within the pagecache
