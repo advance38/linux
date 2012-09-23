@@ -484,7 +484,7 @@ void blk_cleanup_queue(struct request_queue *q)
 
 	/* mark @q DEAD, no new request or merges will be allowed afterwards */
 	mutex_lock(&q->sysfs_lock);
-	queue_flag_set_unlocked(QUEUE_FLAG_DEAD, q);
+	queue_flag_set_unlocked(QUEUE_FLAG_DYING, q);
 	spin_lock_irq(lock);
 
 	/*
@@ -501,7 +501,7 @@ void blk_cleanup_queue(struct request_queue *q)
 
 	queue_flag_set(QUEUE_FLAG_NOMERGES, q);
 	queue_flag_set(QUEUE_FLAG_NOXMERGES, q);
-	queue_flag_set(QUEUE_FLAG_DEAD, q);
+	queue_flag_set(QUEUE_FLAG_DYING, q);
 	spin_unlock_irq(lock);
 	mutex_unlock(&q->sysfs_lock);
 
@@ -723,7 +723,7 @@ EXPORT_SYMBOL(blk_init_allocated_queue);
 
 bool blk_get_queue(struct request_queue *q)
 {
-	if (likely(!blk_queue_dead(q))) {
+	if (likely(!blk_queue_dying(q))) {
 		__blk_get_queue(q);
 		return true;
 	}
@@ -877,7 +877,7 @@ static struct request *__get_request(struct request_list *rl, int rw_flags,
 	const bool is_sync = rw_is_sync(rw_flags) != 0;
 	int may_queue;
 
-	if (unlikely(blk_queue_dead(q)))
+	if (unlikely(blk_queue_dying(q)))
 		return NULL;
 
 	may_queue = elv_may_queue(q, rw_flags);
@@ -1057,7 +1057,7 @@ retry:
 	if (rq)
 		return rq;
 
-	if (!(gfp_mask & __GFP_WAIT) || unlikely(blk_queue_dead(q))) {
+	if (!(gfp_mask & __GFP_WAIT) || unlikely(blk_queue_dying(q))) {
 		blk_put_rl(rl);
 		return NULL;
 	}
@@ -1909,7 +1909,7 @@ int blk_insert_cloned_request(struct request_queue *q, struct request *rq)
 		return -EIO;
 
 	spin_lock_irqsave(q->queue_lock, flags);
-	if (unlikely(blk_queue_dead(q))) {
+	if (unlikely(blk_queue_dying(q))) {
 		spin_unlock_irqrestore(q->queue_lock, flags);
 		return -ENODEV;
 	}
@@ -2889,7 +2889,7 @@ static void queue_unplugged(struct request_queue *q, unsigned int depth,
 	/*
 	 * Don't mess with dead queue.
 	 */
-	if (unlikely(blk_queue_dead(q))) {
+	if (unlikely(blk_queue_dying(q))) {
 		spin_unlock(q->queue_lock);
 		return;
 	}
@@ -2998,7 +2998,7 @@ void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 		/*
 		 * Short-circuit if @q is dead
 		 */
-		if (unlikely(blk_queue_dead(q))) {
+		if (unlikely(blk_queue_dying(q))) {
 			__blk_end_request_all(rq, -ENODEV);
 			continue;
 		}
