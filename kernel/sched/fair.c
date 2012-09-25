@@ -447,6 +447,12 @@ static inline int entity_before(struct sched_entity *a,
 	return (s64)(a->vruntime - b->vruntime) < 0;
 }
 
+static inline long greater_vruntime(u64 *a, u64 *b)
+{
+	s64 diff = (s64)(*a - *b);
+	return diff > 0;
+}
+
 static void update_min_vruntime(struct cfs_rq *cfs_rq)
 {
 	u64 vruntime = cfs_rq->min_vruntime;
@@ -472,56 +478,17 @@ static void update_min_vruntime(struct cfs_rq *cfs_rq)
 #endif
 }
 
-/*
- * Enqueue an entity into the rb-tree:
+/* NOTE: we're passing greater_vruntime for both compare & greater because we
+ * don't need to use the find function.
  */
-static void __enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
-{
-	struct rb_node **link = &cfs_rq->tasks_timeline.rb_node;
-	struct rb_node *parent = NULL;
-	struct sched_entity *entry;
-	int leftmost = 1;
-
-	/*
-	 * Find the right place in the rbtree:
-	 */
-	while (*link) {
-		parent = *link;
-		entry = rb_entry(parent, struct sched_entity, run_node);
-		/*
-		 * We dont care about collisions. Nodes with
-		 * the same key stay together.
-		 */
-		if (entity_before(se, entry)) {
-			link = &parent->rb_left;
-		} else {
-			link = &parent->rb_right;
-			leftmost = 0;
-		}
-	}
-
-	/*
-	 * Maintain a cache of leftmost tree entries (it is frequently
-	 * used):
-	 */
-	if (leftmost)
-		cfs_rq->rb_leftmost = &se->run_node;
-
-	rb_link_node(&se->run_node, parent, link);
-	rb_insert_color(&se->run_node, &cfs_rq->tasks_timeline);
-}
-
-static void __dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
-{
-	if (cfs_rq->rb_leftmost == &se->run_node) {
-		struct rb_node *next_node;
-
-		next_node = rb_next(&se->run_node);
-		cfs_rq->rb_leftmost = next_node;
-	}
-
-	rb_erase(&se->run_node, &cfs_rq->tasks_timeline);
-}
+RB_DEFINE_INTERFACE(
+	fair_tree,
+	struct cfs_rq, tasks_timeline, rb_leftmost, /* no right or count */, ,
+	struct sched_entity, run_node, vruntime,
+	0, greater_vruntime, greater_vruntime, /* no augment */,
+	/* find unused */ ,
+	static __flatten, /* let gcc decide rather or not to inline insert */
+	/* find_near unused */, /* insert_near unused */)
 
 struct sched_entity *__pick_first_entity(struct cfs_rq *cfs_rq)
 {
@@ -1108,7 +1075,7 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	update_stats_enqueue(cfs_rq, se);
 	check_spread(cfs_rq, se);
 	if (se != cfs_rq->curr)
-		__enqueue_entity(cfs_rq, se);
+		fair_tree_insert(cfs_rq, se);
 	se->on_rq = 1;
 
 	if (cfs_rq->nr_running == 1) {
@@ -1189,7 +1156,7 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	clear_buddies(cfs_rq, se);
 
 	if (se != cfs_rq->curr)
-		__dequeue_entity(cfs_rq, se);
+		fair_tree_remove(cfs_rq, se);
 	se->on_rq = 0;
 	update_cfs_load(cfs_rq, 0);
 	account_entity_dequeue(cfs_rq, se);
@@ -1260,7 +1227,7 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		 * runqueue.
 		 */
 		update_stats_wait_end(cfs_rq, se);
-		__dequeue_entity(cfs_rq, se);
+		fair_tree_remove(cfs_rq, se);
 	}
 
 	update_stats_curr_start(cfs_rq, se);
@@ -1339,7 +1306,7 @@ static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 	if (prev->on_rq) {
 		update_stats_wait_start(cfs_rq, prev);
 		/* Put 'current' back into the tree. */
-		__enqueue_entity(cfs_rq, prev);
+		fair_tree_insert(cfs_rq, prev);
 	}
 	cfs_rq->curr = NULL;
 }
@@ -3615,7 +3582,7 @@ void update_group_power(struct sched_domain *sd, int cpu)
 		/*
 		 * !SD_OVERLAP domains can assume that child groups
 		 * span the current group.
-		 */ 
+		 */
 
 		group = child->groups;
 		do {
