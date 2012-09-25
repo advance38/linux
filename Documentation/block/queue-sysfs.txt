@@ -133,6 +133,22 @@ control of this block device to that new IO scheduler. Note that writing
 an IO scheduler name to this file will attempt to load that IO scheduler
 module, if it isn't already present in the system.
 
+sgio_read_filter (RW)
+---------------------
+When read, this file will display a list of SCSI commands (i.e. values of
+the first byte of a CDB) that are always available for unprivileged users
+(via /dev/bsg, /dev/sgNN, or ioctls such as SG_IO and CDROM_SEND_PACKET).
+When written, the list of commands will be modified.  By default it
+will be completely replaced; writing a string that begins with '+' will
+add new commands, and writing a string that begins with '-' will remove
+some commands.  Ranges of commands are supported, for example '0x00-0xff'.
+
+sgio_write_filter (RW)
+----------------------
+When read, this file will display a list of SCSI commands (i.e. values of
+the first byte of a CDB) that are available for unprivileged users
+when the block device is open for writing.  Writing to this file behaves
+as for sgio_read_filter.
 
 
 Jens Axboe <jens.axboe@oracle.com>, February 2009

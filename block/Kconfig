@@ -65,6 +65,16 @@ config BLK_DEV_BSG
 
 	  If unsure, say Y.
 
+config BLK_DEV_SG_FILTER_SYSFS
+	bool "Customizable SG_IO filters in sysfs"
+	default y
+	help
+	  Saying Y here will let you use sysfs to customize the list
+	  of SCSI commands that are available (via /dev/sg, /dev/bsg or
+	  ioctls such as SG_IO) to unprivileged users.
+
+	  If unsure, say Y.
+
 config BLK_DEV_BSGLIB
 	bool "Block layer SG support v4 helper lib"
 	default n

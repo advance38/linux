@@ -18,6 +18,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/errno.h>
+#include <linux/ctype.h>
 #include <linux/string.h>
 #include <linux/module.h>
 #include <linux/blkdev.h>
@@ -110,6 +111,8 @@ static int sg_emulated_host(struct request_queue *q, int __user *p)
 
 static void blk_set_cmd_filter_defaults(struct blk_cmd_filter *filter)
 {
+	memset(filter, 0, sizeof(*filter));
+
 	/* Basic read-only commands */
 	__set_bit(TEST_UNIT_READY, filter->read_ok);
 	__set_bit(REQUEST_SENSE, filter->read_ok);
@@ -737,6 +740,109 @@ int scsi_cmd_blk_ioctl(struct block_device *bd, fmode_t mode,
 	return scsi_cmd_ioctl(bd->bd_disk->queue, bd->bd_disk, mode, cmd, arg);
 }
 EXPORT_SYMBOL(scsi_cmd_blk_ioctl);
+
+#ifdef CONFIG_BLK_DEV_SG_FILTER_SYSFS
+ssize_t blk_filter_show(struct request_queue *q, char *page, int rw)
+{
+	struct blk_cmd_filter *filter;
+	char *p = page;
+	unsigned long *okbits;
+	int i;
+
+	filter = q->cmd_filter;
+	if (!filter)
+		filter = &blk_default_cmd_filter;
+
+	if (rw == READ)
+		okbits = filter->read_ok;
+	else
+		okbits = filter->write_ok;
+
+	for (i = 0; i < BLK_SCSI_MAX_CMDS; i++)
+		if (test_bit(i, okbits))
+			p += sprintf(p, "0x%02x ", i);
+
+	if (p > page)
+		p[-1] = '\n';
+
+	return p - page;
+}
+EXPORT_SYMBOL_GPL(blk_filter_show);
+
+ssize_t blk_filter_store(struct request_queue *q,
+			 const char *page, size_t count, int rw)
+{
+	unsigned long okbits[BLK_SCSI_CMD_PER_LONG], *target_okbits;
+	bool set;
+	const char *p = page;
+	char *endp;
+	int start = -1, cmd;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (!q->cmd_filter) {
+		q->cmd_filter = kmalloc(sizeof(struct blk_cmd_filter),
+					GFP_KERNEL);
+		if (!q->cmd_filter)
+			return -ENOMEM;
+
+		blk_set_cmd_filter_defaults(q->cmd_filter);
+	}
+
+	if (rw == READ)
+		target_okbits = q->cmd_filter->read_ok;
+	else
+		target_okbits = q->cmd_filter->write_ok;
+
+	set = (p[0] != '-');
+	if (p[0] != '-' && p[0] != '+')
+		memset(okbits, 0, sizeof(okbits));
+	else {
+		memcpy(okbits, target_okbits, sizeof(okbits));
+		p++;
+	}
+
+	while (p < page + count) {
+		if (start == -1 && isspace(*p)) {
+			p++;
+			continue;
+		}
+
+		cmd = simple_strtol(p, &endp, 0);
+
+		/* all of these cases means invalid input, so do nothing. */
+		if (endp == p || cmd < 0 || cmd >= BLK_SCSI_MAX_CMDS ||
+		    (start != -1 && endp < page + count && !isspace(*endp)))
+			return -EINVAL;
+
+		p = endp;
+		if (p < page + count && *p == '-') {
+			BUG_ON(start != -1);
+			start = cmd;
+			p++;
+			continue;
+		}
+
+		if (start == -1)
+			start = cmd;
+
+		for (; start <= cmd; start++)
+			if (set)
+				__set_bit(start, okbits);
+			else
+				__clear_bit(start, okbits);
+		start = -1;
+	}
+
+	if (start != -1)
+		return -EINVAL;
+
+	memcpy(target_okbits, okbits, sizeof(okbits));
+	return count;
+}
+EXPORT_SYMBOL_GPL(blk_filter_store);
+#endif
 
 static int __init blk_scsi_ioctl_init(void)
 {

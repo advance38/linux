@@ -1012,8 +1012,29 @@ static inline int sb_issue_zeroout(struct super_block *sb, sector_t block,
 				    gfp_mask);
 }
 
+/*
+ * command filter functions
+ */
 extern int blk_verify_command(struct blk_cmd_filter *filter,
 			      unsigned char *cmd, fmode_t has_write_perm);
+
+#ifdef CONFIG_BLK_DEV_SG_FILTER_SYSFS
+ssize_t blk_filter_show(struct request_queue *q, char *page, int rw);
+ssize_t blk_filter_store(struct request_queue *q,
+			 const char *page, size_t count, int rw);
+#else
+static inline ssize_t blk_filter_show(struct request_queue *q, char *page, int rw)
+{
+	return -EINVAL;
+}
+
+static inline ssize_t blk_filter_store(struct request_queue *q,
+				       const char *page, size_t count, int rw);
+{
+	return -EINVAL;
+}
+#endif /* CONFIG_BLK_DEV_SG_FILTER_SYSFS */
+
 
 enum blk_default_limits {
 	BLK_MAX_SEGMENTS	= 128,

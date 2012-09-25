@@ -394,6 +394,43 @@ static struct queue_sysfs_entry queue_random_entry = {
 	.store = queue_store_random,
 };
 
+#ifdef CONFIG_BLK_DEV_SG_FILTER_SYSFS
+static ssize_t queue_sgio_filter_read_show(struct request_queue *q, char *page)
+{
+	return blk_filter_show(q, page, READ);
+}
+
+static ssize_t queue_sgio_filter_write_show(struct request_queue *q,
+				 char *page)
+{
+	return blk_filter_show(q, page, WRITE);
+}
+
+static ssize_t queue_sgio_filter_read_store(struct request_queue *q,
+				    const char *page, size_t count)
+{
+	return blk_filter_store(q, page, count, READ);
+}
+
+static ssize_t queue_sgio_filter_write_store(struct request_queue *q,
+				     const char *page, size_t count)
+{
+	return blk_filter_store(q, page, count, WRITE);
+}
+
+static struct queue_sysfs_entry queue_sgio_filter_read_entry = {
+	.attr = { .name = "sgio_filter_read", .mode = S_IRUGO | S_IWUSR },
+	.show = queue_sgio_filter_read_show,
+	.store = queue_sgio_filter_read_store,
+};
+
+static struct queue_sysfs_entry queue_sgio_filter_write_entry = {
+	.attr = {.name = "sgio_filter_write", .mode = S_IRUGO | S_IWUSR },
+	.show = queue_sgio_filter_write_show,
+	.store = queue_sgio_filter_write_store,
+};
+#endif
+
 static struct attribute *default_attrs[] = {
 	&queue_requests_entry.attr,
 	&queue_ra_entry.attr,
@@ -416,6 +453,10 @@ static struct attribute *default_attrs[] = {
 	&queue_rq_affinity_entry.attr,
 	&queue_iostats_entry.attr,
 	&queue_random_entry.attr,
+#ifdef CONFIG_BLK_DEV_SG_FILTER_SYSFS
+	&queue_sgio_filter_read_entry.attr,
+	&queue_sgio_filter_write_entry.attr,
+#endif
 	NULL,
 };
 
