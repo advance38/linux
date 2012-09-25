@@ -33,11 +33,6 @@
 #include <scsi/scsi_ioctl.h>
 #include <scsi/scsi_cmnd.h>
 
-struct blk_cmd_filter {
-	unsigned long read_ok[BLK_SCSI_CMD_PER_LONG];
-	unsigned long write_ok[BLK_SCSI_CMD_PER_LONG];
-};
-
 static struct blk_cmd_filter blk_default_cmd_filter;
 
 /* Command group 3 is reserved and should never be used.  */
@@ -196,17 +191,15 @@ static void blk_set_cmd_filter_defaults(struct blk_cmd_filter *filter)
 	__set_bit(GPCMD_SET_READ_AHEAD, filter->write_ok);
 }
 
-int blk_verify_command(unsigned char *cmd, fmode_t has_write_perm)
+int blk_verify_command(struct blk_cmd_filter *filter,
+		       unsigned char *cmd, fmode_t has_write_perm)
 {
-	struct blk_cmd_filter *filter = &blk_default_cmd_filter;
-
 	/* root can do any command. */
 	if (capable(CAP_SYS_RAWIO))
 		return 0;
 
-	/* if there's no filter set, assume we're filtering everything out */
 	if (!filter)
-		return -EPERM;
+		filter = &blk_default_cmd_filter;
 
 	/* Anybody who can open the device can do a read-safe command */
 	if (test_bit(cmd[0], filter->read_ok))
@@ -225,7 +218,7 @@ static int blk_fill_sghdr_rq(struct request_queue *q, struct request *rq,
 {
 	if (copy_from_user(rq->cmd, hdr->cmdp, hdr->cmd_len))
 		return -EFAULT;
-	if (blk_verify_command(rq->cmd, mode & FMODE_WRITE))
+	if (blk_verify_command(q->cmd_filter, rq->cmd, mode & FMODE_WRITE))
 		return -EPERM;
 
 	/*
@@ -472,7 +465,7 @@ int sg_scsi_ioctl(struct request_queue *q, struct gendisk *disk, fmode_t mode,
 	if (in_len && copy_from_user(buffer, sic->data + cmdlen, in_len))
 		goto error;
 
-	err = blk_verify_command(rq->cmd, mode & FMODE_WRITE);
+	err = blk_verify_command(q->cmd_filter, rq->cmd, mode & FMODE_WRITE);
 	if (err)
 		goto error;
 

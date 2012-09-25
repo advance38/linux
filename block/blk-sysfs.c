@@ -487,6 +487,8 @@ static void blk_release_queue(struct kobject *kobj)
 
 	blkcg_exit_queue(q);
 
+	kfree(q->cmd_filter);
+
 	if (q->elevator) {
 		spin_lock_irq(q->queue_lock);
 		ioc_clear_queue(q);
