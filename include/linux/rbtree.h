@@ -98,6 +98,7 @@ static inline struct page * rb_insert_page_cache(struct inode * inode,
 #include <linux/kernel.h>
 #include <linux/stddef.h>
 #include <linux/bug.h>
+#include <linux/kconfig.h>
 
 struct rb_node
 {
