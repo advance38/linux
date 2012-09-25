@@ -100,6 +100,19 @@ static inline struct page * rb_insert_page_cache(struct inode * inode,
 #include <linux/bug.h>
 #include <linux/kconfig.h>
 
+/**
+ * struct rb_node
+ * @rb_parent_color: Contains the color in the lower 2 bits (although only bit
+ * 		     zero is currently used) and the address of the parent in
+ * 		     the rest (lower 2 bits of address should always be zero on
+ * 		     any arch supported).  If the node is initialized and not a
+ * 		     member of any tree, the parent point to its self.  If the
+ * 		     node belongs to a tree, but is the root element, the
+ * 		     parent will be NULL.  Otherwise, parent will always
+ * 		     point to the parent node in the tree.
+ * @rb_right:        Pointer to the right element.
+ * @rb_left:         Pointer to the left element.
+ */
 struct rb_node
 {
 	unsigned long  rb_parent_color;
