@@ -1629,6 +1629,8 @@ generic_make_request_checks(struct bio *bio)
 
 	might_sleep();
 
+	bio->bi_flags |= 1 << BIO_SUBMITTED;
+
 	if (bio_check_eod(bio, nr_sectors))
 		goto end_io;
 

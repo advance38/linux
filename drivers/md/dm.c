@@ -1058,7 +1058,6 @@ static void split_bvec(struct dm_target_io *tio, struct bio *bio,
 	clone->bi_size = to_bytes(len);
 	clone->bi_io_vec->bv_offset = offset;
 	clone->bi_io_vec->bv_len = clone->bi_size;
-	clone->bi_flags |= 1 << BIO_CLONED;
 
 	if (bio_integrity(bio)) {
 		bio_integrity_clone(clone, bio, GFP_NOIO);

@@ -431,7 +431,7 @@ void __bio_clone(struct bio *bio, struct bio *bio_src)
 	 */
 	bio->bi_sector = bio_src->bi_sector;
 	bio->bi_bdev = bio_src->bi_bdev;
-	bio->bi_flags |= 1 << BIO_CLONED;
+	bio->bi_flags |= (bio_src->bi_flags & (1 << BIO_SUBMITTED));
 	bio->bi_rw = bio_src->bi_rw;
 	bio->bi_vcnt = bio_src->bi_vcnt;
 	bio->bi_size = bio_src->bi_size;
@@ -504,9 +504,9 @@ static int __bio_add_page(struct request_queue *q, struct bio *bio, struct page
 	struct bio_vec *bvec;
 
 	/*
-	 * cloned bio must not modify vec list
+	 * submitted bio must not modify vec list
 	 */
-	if (unlikely(bio_flagged(bio, BIO_CLONED)))
+	if (unlikely(bio_flagged(bio, BIO_SUBMITTED)))
 		return 0;
 
 	if (((bio->bi_size + len) >> 9) > max_sectors)
@@ -743,6 +743,8 @@ int bio_alloc_pages(struct bio *bio, gfp_t gfp_mask)
 {
 	int i;
 	struct bio_vec *bv;
+
+	BUG_ON(bio_flagged(bio, BIO_SUBMITTED));
 
 	bio_for_each_segment_all(bv, bio, i) {
 		bv->bv_page = alloc_page(gfp_mask);

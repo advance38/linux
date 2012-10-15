@@ -103,7 +103,7 @@ struct bio {
 #define BIO_RW_BLOCK	1	/* RW_AHEAD set, and read/write would block */
 #define BIO_EOF		2	/* out-out-bounds error */
 #define BIO_SEG_VALID	3	/* bi_phys_segments valid */
-#define BIO_CLONED	4	/* doesn't own data */
+#define BIO_SUBMITTED	4	/* bio has been submitted */
 #define BIO_BOUNCED	5	/* bio is a bounce bio */
 #define BIO_USER_MAPPED 6	/* contains user pages */
 #define BIO_EOPNOTSUPP	7	/* not supported */
