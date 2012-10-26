@@ -46,7 +46,6 @@ extern void srp_release_transport(struct scsi_transport_template *);
 
 extern struct srp_rport *srp_rport_add(struct Scsi_Host *,
 				       struct srp_rport_identifiers *);
-extern void srp_rport_del(struct srp_rport *);
 extern void srp_start_tl_fail_timers(struct srp_rport *rport, int elapsed);
 extern void srp_stop_tl_fail_timers(struct srp_rport *rport);
 
