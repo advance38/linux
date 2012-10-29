@@ -864,6 +864,8 @@ static void ext4_put_super(struct super_block *sb)
 	ext4_ext_release(sb);
 	ext4_xattr_put_super(sb);
 
+	if (sbi->s_hottrack_enable)
+		hot_track_exit(sb);
 	if (!(sb->s_flags & MS_RDONLY)) {
 		EXT4_CLEAR_INCOMPAT_FEATURE(sb, EXT4_FEATURE_INCOMPAT_RECOVER);
 		es->s_state = cpu_to_le16(sbi->s_mount_state);
@@ -1222,7 +1224,7 @@ enum {
 	Opt_inode_readahead_blks, Opt_journal_ioprio,
 	Opt_dioread_nolock, Opt_dioread_lock,
 	Opt_discard, Opt_nodiscard, Opt_init_itable, Opt_noinit_itable,
-	Opt_max_dir_size_kb,
+	Opt_max_dir_size_kb, Opt_hottrack,
 };
 
 static const match_table_t tokens = {
@@ -1297,6 +1299,7 @@ static const match_table_t tokens = {
 	{Opt_init_itable, "init_itable"},
 	{Opt_noinit_itable, "noinit_itable"},
 	{Opt_max_dir_size_kb, "max_dir_size_kb=%u"},
+	{Opt_hottrack, "hot_track"},
 	{Opt_removed, "check=none"},	/* mount option from ext2/3 */
 	{Opt_removed, "nocheck"},	/* mount option from ext2/3 */
 	{Opt_removed, "reservation"},	/* mount option from ext2/3 */
@@ -1595,6 +1598,14 @@ static int handle_mount_opt(struct super_block *sb, char *opt, int token,
 			sbi->s_li_wait_mult = arg;
 		} else if (token == Opt_max_dir_size_kb) {
 			sbi->s_max_dir_size_kb = arg;
+		} else if (token == Opt_hottrack) {
+			if (hot_track_init(sb)) {
+				ext4_msg(sb, KERN_ERR,
+					"EXT4-fs: hot tracking initialization"
+					" failed");
+				return -1;
+			}
+			sbi->s_hottrack_enable = 1;
 		} else if (token == Opt_stripe) {
 			sbi->s_stripe = arg;
 		} else if (m->flags & MOPT_DATAJ) {

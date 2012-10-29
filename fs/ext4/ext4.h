@@ -1298,6 +1298,9 @@ struct ext4_sb_info {
 
 	/* Precomputed FS UUID checksum for seeding other checksums */
 	__u32 s_csum_seed;
+
+	/* Enable hot tracking or not */
+	int s_hottrack_enable;
 };
 
 static inline struct ext4_sb_info *EXT4_SB(struct super_block *sb)
