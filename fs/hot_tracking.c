@@ -58,6 +58,7 @@ static void hot_range_item_init(struct hot_range_item *hr, u32 start,
 	hr->hot_inode = he;
 	kref_init(&hr->hot_range.refs);
 	spin_lock_init(&hr->hot_range.lock);
+	INIT_LIST_HEAD(&hr->hot_range.n_list);
 	hr->hot_range.hot_freq_data.avg_delta_reads = (u64) -1;
 	hr->hot_range.hot_freq_data.avg_delta_writes = (u64) -1;
 	hr->hot_range.hot_freq_data.flags = FREQ_DATA_TYPE_RANGE;
@@ -88,6 +89,16 @@ static void hot_range_item_free(struct kref *kref)
 		struct hot_comm_item, refs);
 	struct hot_range_item *hr = container_of(comm_item,
 		struct hot_range_item, hot_range);
+	struct hot_info *root = container_of(
+			hr->hot_inode->hot_inode_tree,
+		struct hot_info, hot_inode_tree);
+
+	spin_lock(&hr->hot_range.lock);
+	if (!list_empty(&hr->hot_range.n_list)) {
+		list_del_init(&hr->hot_range.n_list);
+		root->hot_map_nr--;
+	}
+	spin_unlock(&hr->hot_range.lock);
 
 	radix_tree_delete(&hr->hot_inode->hot_range_tree, hr->start);
 	kmem_cache_free(hot_range_item_cachep, hr);
@@ -132,6 +143,15 @@ static void hot_inode_item_free(struct kref *kref)
 			struct hot_comm_item, refs);
 	struct hot_inode_item *he = container_of(comm_item,
 			struct hot_inode_item, hot_inode);
+	struct hot_info *root = container_of(he->hot_inode_tree,
+		struct hot_info, hot_inode_tree);
+
+	spin_lock(&he->hot_inode.lock);
+	if (!list_empty(&he->hot_inode.n_list)) {
+		list_del_init(&he->hot_inode.n_list);
+		root->hot_map_nr--;
+	}
+	spin_unlock(&he->hot_inode.lock);
 
 	hot_range_tree_free(he);
 	radix_tree_delete(he->hot_inode_tree, he->i_ino);
@@ -304,6 +324,44 @@ static void hot_freq_data_update(struct hot_freq_data *freq_data, bool write)
 }
 
 /*
+ * Initialize inode and range map arrays.
+ */
+static void hot_map_array_init(struct hot_info *root)
+{
+	int i;
+	for (i = 0; i < HEAT_MAP_SIZE; i++) {
+		INIT_LIST_HEAD(&root->heat_inode_map[i].node_list);
+		INIT_LIST_HEAD(&root->heat_range_map[i].node_list);
+		root->heat_inode_map[i].temp = i;
+		root->heat_range_map[i].temp = i;
+	}
+}
+
+static void hot_map_list_free(struct list_head *node_list,
+				struct hot_info *root)
+{
+	struct list_head *pos, *next;
+	struct hot_comm_item *node;
+
+	list_for_each_safe(pos, next, node_list) {
+		node = list_entry(pos, struct hot_comm_item, n_list);
+		list_del_init(&node->n_list);
+		root->hot_map_nr--;
+	}
+
+}
+
+/* Free inode and range map arrays */
+static void hot_map_array_exit(struct hot_info *root)
+{
+	int i;
+	for (i = 0; i < HEAT_MAP_SIZE; i++) {
+		hot_map_list_free(&root->heat_inode_map[i].node_list, root);
+		hot_map_list_free(&root->heat_range_map[i].node_list, root);
+	}
+}
+
+/*
  * Initialize kmem cache for hot_inode_item and hot_range_item.
  */
 void __init hot_cache_init(void)
@@ -394,6 +452,7 @@ int hot_track_init(struct super_block *sb)
 
 	sb->s_hot_root = root;
 	hot_inode_tree_init(root);
+	hot_map_array_init(root);
 
 	printk(KERN_INFO "VFS: Turning on hot data tracking\n");
 
@@ -405,6 +464,7 @@ void hot_track_exit(struct super_block *sb)
 {
 	struct hot_info *root = sb->s_hot_root;
 
+	hot_map_array_exit(root);
 	hot_inode_tree_exit(root);
 	kfree(root);
 }
