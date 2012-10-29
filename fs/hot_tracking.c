@@ -397,6 +397,24 @@ static u32 hot_temp_calc(struct hot_freq_data *freq_data)
 	return result;
 }
 
+static bool hot_is_obsolete(struct hot_freq_data *freq_data)
+{
+	int ret = 0;
+	struct timespec ckt = current_kernel_time();
+
+	u64 cur_time = timespec_to_ns(&ckt);
+	u64 last_read_ns =
+		(cur_time - timespec_to_ns(&freq_data->last_read_time));
+	u64 last_write_ns =
+		(cur_time - timespec_to_ns(&freq_data->last_write_time));
+	u64 kick_ns =  TIME_TO_KICK * NSEC_PER_SEC;
+
+	if ((last_read_ns > kick_ns) && (last_write_ns > kick_ns))
+		ret = 1;
+
+	return ret;
+}
+
 /*
  * Calculate a new temperature and, if necessary,
  * move the list_head corresponding to this inode or range
@@ -460,6 +478,44 @@ static void hot_map_array_update(struct hot_freq_data *freq_data,
 			freq_data->last_temp = temp;
 		}
 		spin_unlock(&hr->hot_range.lock);
+	}
+}
+
+/* Update temperatures for each range item for aging purposes */
+static void hot_range_update(struct hot_inode_item *he,
+					struct hot_info *root)
+{
+	struct hot_range_item *hr_nodes[8];
+	u32 start = 0;
+	bool obsolete;
+	int i, n;
+
+	while (1) {
+		spin_lock(&he->lock);
+		n = radix_tree_gang_lookup(&he->hot_range_tree,
+				(void **)hr_nodes, start,
+				ARRAY_SIZE(hr_nodes));
+		if (!n) {
+			spin_unlock(&he->lock);
+			break;
+		}
+		spin_unlock(&he->lock);
+
+		start = hr_nodes[n - 1]->start + 1;
+		for (i = 0; i < n; i++) {
+			kref_get(&hr_nodes[i]->hot_range.refs);
+			hot_map_array_update(
+				&hr_nodes[i]->hot_range.hot_freq_data, root);
+
+			spin_lock(&hr_nodes[i]->hot_range.lock);
+			obsolete = hot_is_obsolete(
+					&hr_nodes[i]->hot_range.hot_freq_data);
+			spin_unlock(&hr_nodes[i]->hot_range.lock);
+
+			hot_range_item_put(hr_nodes[i]);
+			if (obsolete)
+				hot_range_item_put(hr_nodes[i]);
+		}
 	}
 }
 
