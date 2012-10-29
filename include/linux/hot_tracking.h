@@ -23,6 +23,8 @@
 #define HEAT_MAP_BITS 8
 #define HEAT_MAP_SIZE (1 << HEAT_MAP_BITS)
 
+#define HOT_NAME_MAX 16
+
 /*
  * A frequency data struct holds values that are used to
  * determine temperature of files and file ranges. These structs
@@ -73,6 +75,25 @@ struct hot_range_item {
 	u32 len; /* length in bytes */
 };
 
+typedef u64 (hot_rw_freq_calc_fn) (struct timespec old_atime,
+			struct timespec cur_time, u64 old_avg);
+typedef u32 (hot_temp_calc_fn) (struct hot_freq_data *freq_data);
+typedef bool (hot_is_obsolete_fn) (struct hot_freq_data *freq_data);
+
+struct hot_func_ops {
+	hot_rw_freq_calc_fn *hot_rw_freq_calc_fn;
+	hot_temp_calc_fn *hot_temp_calc_fn;
+	hot_is_obsolete_fn *hot_is_obsolete_fn;
+};
+
+/* identifies an hot func type */
+struct hot_func_type {
+	char hot_func_name[HOT_NAME_MAX];
+	/* fields provided by specific FS */
+	struct hot_func_ops ops;
+	struct list_head list;
+};
+
 struct hot_info {
 	struct radix_tree_root hot_inode_tree;
 	spinlock_t lock; /*protect inode tree */
@@ -85,6 +106,7 @@ struct hot_info {
 
 	struct workqueue_struct *update_wq;
 	struct delayed_work update_work;
+	struct hot_func_type *hot_func_type;
 };
 
 extern void __init hot_cache_init(void);
@@ -92,5 +114,8 @@ extern int hot_track_init(struct super_block *sb);
 extern void hot_track_exit(struct super_block *sb);
 extern void hot_update_freqs(struct inode *inode, u64 start,
 				u64 len, int rw);
+
+extern int hot_func_register(struct hot_func_type *h);
+extern void hot_func_unregister(struct hot_func_type *h);
 
 #endif  /* _LINUX_HOTTRACK_H */

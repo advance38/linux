@@ -24,6 +24,9 @@
 #include <linux/limits.h>
 #include "hot_tracking.h"
 
+static DEFINE_SPINLOCK(hot_func_list_lock);
+static LIST_HEAD(hot_func_list);
+
 /* kmem_cache pointers for slab caches */
 static struct kmem_cache *hot_inode_item_cachep __read_mostly;
 static struct kmem_cache *hot_range_item_cachep __read_mostly;
@@ -305,20 +308,23 @@ static u64 hot_average_update(struct timespec old_atime,
 	return new_avg;
 }
 
-static void hot_freq_data_update(struct hot_freq_data *freq_data, bool write)
+static void hot_freq_data_update(struct hot_info *root,
+		struct hot_freq_data *freq_data, bool write)
 {
 	struct timespec cur_time = current_kernel_time();
 
 	if (write) {
 		freq_data->nr_writes += 1;
-		freq_data->avg_delta_writes = hot_average_update(
+		freq_data->avg_delta_writes =
+			root->hot_func_type->ops.hot_rw_freq_calc_fn(
 				freq_data->last_write_time,
 				cur_time,
 				freq_data->avg_delta_writes);
 		freq_data->last_write_time = cur_time;
 	} else {
 		freq_data->nr_reads += 1;
-		freq_data->avg_delta_reads = hot_average_update(
+		freq_data->avg_delta_reads =
+			root->hot_func_type->ops.hot_rw_freq_calc_fn(
 				freq_data->last_read_time,
 				cur_time,
 				freq_data->avg_delta_reads);
@@ -430,7 +436,7 @@ static void hot_map_array_update(struct hot_freq_data *freq_data,
 	struct hot_comm_item *comm_item;
 	struct hot_inode_item *he;
 	struct hot_range_item *hr;
-	u32 temp = hot_temp_calc(freq_data);
+	u32 temp = root->hot_func_type->ops.hot_temp_calc_fn(freq_data);
 	u8 a_temp = temp >> (32 - HEAT_MAP_BITS);
 	u8 b_temp = freq_data->last_temp >> (32 - HEAT_MAP_BITS);
 
@@ -511,7 +517,7 @@ static void hot_range_update(struct hot_inode_item *he,
 				&hr_nodes[i]->hot_range.hot_freq_data, root);
 
 			spin_lock(&hr_nodes[i]->hot_range.lock);
-			obsolete = hot_is_obsolete(
+			obsolete = root->hot_func_type->ops.hot_is_obsolete_fn(
 					&hr_nodes[i]->hot_range.hot_freq_data);
 			spin_unlock(&hr_nodes[i]->hot_range.lock);
 
@@ -668,7 +674,7 @@ void hot_update_freqs(struct inode *inode, u64 start,
 	}
 
 	spin_lock(&he->hot_inode.lock);
-	hot_freq_data_update(&he->hot_inode.hot_freq_data, rw);
+	hot_freq_data_update(root, &he->hot_inode.hot_freq_data, rw);
 	spin_unlock(&he->hot_inode.lock);
 
 	/*
@@ -685,7 +691,7 @@ void hot_update_freqs(struct inode *inode, u64 start,
 		}
 
 		spin_lock(&hr->hot_range.lock);
-		hot_freq_data_update(&hr->hot_range.hot_freq_data, rw);
+		hot_freq_data_update(root, &hr->hot_range.hot_freq_data, rw);
 		spin_unlock(&hr->hot_range.lock);
 
 		hot_range_item_put(hr);
@@ -694,6 +700,61 @@ void hot_update_freqs(struct inode *inode, u64 start,
 	hot_inode_item_put(he);
 }
 EXPORT_SYMBOL_GPL(hot_update_freqs);
+
+static struct hot_func_type hot_func_def = {
+	.hot_func_name = "hot_type_def",
+	.ops = {
+		.hot_rw_freq_calc_fn = hot_average_update,
+		.hot_temp_calc_fn    = hot_temp_calc,
+		.hot_is_obsolete_fn  = hot_is_obsolete,
+	},
+};
+
+static struct hot_func_type *hot_func_get(const char *name)
+{
+	struct hot_func_type *f, *h = &hot_func_def;
+
+	spin_lock(&hot_func_list_lock);
+	list_for_each_entry(f, &hot_func_list, list) {
+		if (!strcmp(f->hot_func_name, name))
+			h = f;
+	}
+	spin_unlock(&hot_func_list_lock);
+
+	return h;
+}
+
+int hot_func_register(struct hot_func_type *h)
+{
+	struct hot_func_type *f, *t = NULL;
+
+	/* register, don't allow duplicate names */
+	spin_lock(&hot_func_list_lock);
+	list_for_each_entry(f, &hot_func_list, list) {
+		if (!strcmp(f->hot_func_name, h->hot_func_name))
+			t = f;
+	}
+
+	if (t) {
+		spin_unlock(&hot_func_list_lock);
+		return -EBUSY;
+	}
+
+	list_add_tail(&h->list, &hot_func_list);
+	spin_unlock(&hot_func_list_lock);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(hot_func_register);
+
+void hot_func_unregister(struct hot_func_type *h)
+{
+	/* unregister */
+	spin_lock(&hot_func_list_lock);
+	list_del_init(&h->list);
+	spin_unlock(&hot_func_list_lock);
+}
+EXPORT_SYMBOL_GPL(hot_func_unregister);
 
 /*
  * Initialize the data structures for hot data tracking.
@@ -713,6 +774,9 @@ int hot_track_init(struct super_block *sb)
 	sb->s_hot_root = root;
 	hot_inode_tree_init(root);
 	hot_map_array_init(root);
+
+	/* Get hot func type */
+	root->hot_func_type = hot_func_get(sb->s_type->name);
 
 	root->update_wq = alloc_workqueue(
 		"hot_update_wq", WQ_NON_REENTRANT, 0);
