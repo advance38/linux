@@ -119,6 +119,7 @@ struct hot_info {
 	struct delayed_work update_work;
 	struct hot_func_type *hot_func_type;
 	struct shrinker hot_shrink;
+	struct dentry *debugfs_root;
 };
 
 /*
