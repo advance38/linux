@@ -35,6 +35,7 @@
 #include <linux/buffer_head.h> /* __set_page_dirty_buffers */
 #include <linux/pagevec.h>
 #include <linux/timer.h>
+#include <linux/hot_tracking.h>
 #include <trace/events/writeback.h>
 
 /*
@@ -1903,13 +1904,24 @@ EXPORT_SYMBOL(generic_writepages);
 int do_writepages(struct address_space *mapping, struct writeback_control *wbc)
 {
 	int ret;
+	pgoff_t start = 0;
+	u64 count = 0;
 
 	if (wbc->nr_to_write <= 0)
 		return 0;
+
+	start = mapping->writeback_index << PAGE_CACHE_SHIFT;
+	count = (u64)wbc->nr_to_write;
+
 	if (mapping->a_ops->writepages)
 		ret = mapping->a_ops->writepages(mapping, wbc);
 	else
 		ret = generic_writepages(mapping, wbc);
+
+	/* Hot data tracking */
+	hot_update_freqs(mapping->host, (u64)start,
+			(count - (u64)wbc->nr_to_write) * PAGE_CACHE_SIZE, 1);
+
 	return ret;
 }
 
