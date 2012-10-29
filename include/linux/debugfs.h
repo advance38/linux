@@ -46,6 +46,9 @@ extern struct dentry *arch_debugfs_dir;
 extern const struct file_operations debugfs_file_operations;
 extern const struct inode_operations debugfs_link_operations;
 
+struct dentry *debugfs_get_dentry(const char *name,
+				struct dentry *parent, int len);
+
 struct dentry *debugfs_create_file(const char *name, umode_t mode,
 				   struct dentry *parent, void *data,
 				   const struct file_operations *fops);
@@ -102,6 +105,12 @@ bool debugfs_initialized(void);
 #else
 
 #include <linux/err.h>
+
+static inline struct dentry *debugfs_get_dentry(const char *name,
+					struct dentry *parent, int len)
+{
+	return ERR_PTR(-ENODEV);
+}
 
 /* 
  * We do not return NULL from these functions if CONFIG_DEBUG_FS is not enabled

@@ -354,6 +354,32 @@ exit:
 	return dentry;
 }
 
+struct dentry *debugfs_get_dentry(const char *name,
+			struct dentry *parent, int len)
+{
+	struct dentry *dentry = NULL;
+	int error = 0;
+
+	error = simple_pin_fs(&debug_fs_type, &debugfs_mount,
+				&debugfs_mount_count);
+	if (error)
+		return NULL;
+
+	if (!parent)
+		parent = debugfs_mount->mnt_root;
+
+	mutex_lock(&parent->d_inode->i_mutex);
+	dentry = lookup_one_len(name, parent, strlen(name));
+	if (!IS_ERR(dentry)) {
+		mutex_unlock(&parent->d_inode->i_mutex);
+		return dentry;
+	}
+	mutex_unlock(&parent->d_inode->i_mutex);
+
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(debugfs_get_dentry);
+
 /**
  * debugfs_create_file - create a file in the debugfs filesystem
  * @name: a pointer to a string containing the name of the file to create.
