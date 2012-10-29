@@ -107,6 +107,7 @@ struct hot_info {
 	struct workqueue_struct *update_wq;
 	struct delayed_work update_work;
 	struct hot_func_type *hot_func_type;
+	struct shrinker hot_shrink;
 };
 
 extern void __init hot_cache_init(void);
