@@ -69,5 +69,7 @@ struct hot_info {
 };
 
 extern void __init hot_cache_init(void);
+extern int hot_track_init(struct super_block *sb);
+extern void hot_track_exit(struct super_block *sb);
 
 #endif  /* _LINUX_HOTTRACK_H */

@@ -20,4 +20,6 @@
 #define FREQ_DATA_TYPE_INODE (1 << 0)
 #define FREQ_DATA_TYPE_RANGE (1 << 1)
 
+void hot_inode_item_put(struct hot_inode_item *he);
+
 #endif /* __HOT_TRACKING__ */
