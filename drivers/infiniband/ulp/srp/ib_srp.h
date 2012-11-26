@@ -78,11 +78,10 @@ enum {
 	SRP_MAP_NO_FMR		= 1,
 };
 
-enum srp_target_state {
-	SRP_TARGET_LIVE,
-	SRP_TARGET_CONNECTING,
-	SRP_TARGET_DEAD,
-	SRP_TARGET_REMOVED
+enum srp_state_bits {
+	SRP_STATE_REMOVED	= 0,
+	SRP_STATE_DISCONNECTED	= 1,
+	SRP_STATE_ERROR		= 2,
 };
 
 enum srp_iu_type {
@@ -137,7 +136,7 @@ struct srp_target_port {
 	struct ib_qp	       *qp;
 	u32			lkey;
 	u32			rkey;
-	enum srp_target_state	state;
+	unsigned long		state;
 	unsigned int		max_iu_len;
 	unsigned int		cmd_sg_cnt;
 	unsigned int		indirect_size;
