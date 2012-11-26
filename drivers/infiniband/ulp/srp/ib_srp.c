@@ -1328,14 +1328,12 @@ static int srp_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *scmnd)
 	int len;
 
 	if (unlikely(target->state)) {
-		if (srp_is_disconnected(target))
+		if (!srp_is_removed(target))
 			goto err;
 
-		if (srp_is_removed(target)) {
-			scmnd->result = DID_BAD_TARGET << 16;
-			scmnd->scsi_done(scmnd);
-			return 0;
-		}
+		scmnd->result = DID_BAD_TARGET << 16;
+		scmnd->scsi_done(scmnd);
+		return 0;
 	}
 
 	spin_lock_irqsave(&target->lock, flags);
@@ -1683,7 +1681,7 @@ static int srp_send_tsk_mgmt(struct srp_target_port *target,
 	struct srp_iu *iu;
 	struct srp_tsk_mgmt *tsk_mgmt;
 
-	if (srp_is_removed(target))
+	if (target->state)
 		return -1;
 
 	init_completion(&target->tsk_mgmt_done);
@@ -1727,12 +1725,11 @@ static int srp_abort(struct scsi_cmnd *scmnd)
 
 	shost_printk(KERN_ERR, target->scsi_host, "SRP abort called\n");
 
-	if (srp_in_error(target))
-		return FAILED;
 	if (!req || !srp_claim_req(target, req, scmnd))
 		return FAILED;
-	srp_send_tsk_mgmt(target, req->index, scmnd->device->lun,
-			  SRP_TSK_ABORT_TASK);
+	if (srp_send_tsk_mgmt(target, req->index, scmnd->device->lun,
+			  SRP_TSK_ABORT_TASK))
+		return FAILED;
 	srp_free_req(target, req, scmnd, 0);
 	scmnd->result = DID_ABORT << 16;
 	scmnd->scsi_done(scmnd);
@@ -1747,8 +1744,6 @@ static int srp_reset_device(struct scsi_cmnd *scmnd)
 
 	shost_printk(KERN_ERR, target->scsi_host, "SRP reset_device called\n");
 
-	if (srp_in_error(target))
-		return FAILED;
 	if (srp_send_tsk_mgmt(target, SRP_TAG_NO_REQ, scmnd->device->lun,
 			      SRP_TSK_LUN_RESET))
 		return FAILED;
