@@ -1328,12 +1328,13 @@ static int srp_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *scmnd)
 	int len;
 
 	if (unlikely(target->state)) {
-		if (!srp_is_removed(target))
+		/*
+		 * Only requeue commands if we cannot send them to the target.
+		 * We'll let commands through during shutdown so that caches
+		 * get flushed, etc.
+		 */
+		if (srp_is_disconnected(target) || srp_in_error(target))
 			goto err;
-
-		scmnd->result = DID_BAD_TARGET << 16;
-		scmnd->scsi_done(scmnd);
-		return 0;
 	}
 
 	spin_lock_irqsave(&target->lock, flags);
