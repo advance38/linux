@@ -479,13 +479,11 @@ static void srp_disconnect_target(struct srp_target_port *target)
 
 	/* XXX should send SRP_I_LOGOUT request */
 
-	init_completion(&target->done);
 	if (ib_send_cm_dreq(target->cm_id, NULL, 0)) {
 		shost_printk(KERN_DEBUG, target->scsi_host,
 			     PFX "Sending CM DREQ failed\n");
 		return;
 	}
-	wait_for_completion(&target->done);
 }
 
 static void srp_free_req_data(struct srp_target_port *target)
@@ -1658,7 +1656,6 @@ static int srp_cm_handler(struct ib_cm_id *cm_id, struct ib_cm_event *event)
 		shost_printk(KERN_ERR, target->scsi_host,
 			     PFX "connection closed\n");
 
-		comp = 1;
 		target->status = 0;
 		break;
 
