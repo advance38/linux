@@ -223,6 +223,8 @@ static void blk_delay_work(struct work_struct *work)
  */
 void blk_delay_queue(struct request_queue *q, unsigned long msecs)
 {
+	lockdep_assert_held(q->queue_lock);
+
 	if (likely(!blk_queue_dead(q)))
 		queue_delayed_work(kblockd_workqueue, &q->delay_work,
 				   msecs_to_jiffies(msecs));
@@ -348,6 +350,8 @@ EXPORT_SYMBOL(__blk_run_queue);
  */
 void blk_run_queue_async(struct request_queue *q)
 {
+	lockdep_assert_held(q->queue_lock);
+
 	if (likely(!blk_queue_stopped(q) && !blk_queue_dead(q)))
 		mod_delayed_work(kblockd_workqueue, &q->delay_work, 0);
 }
