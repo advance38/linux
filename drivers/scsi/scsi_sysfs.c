@@ -960,8 +960,12 @@ void __scsi_remove_device(struct scsi_device *sdev)
 	unsigned long flags;
 
 	if (sdev->is_visible) {
-		if (scsi_device_set_state(sdev, SDEV_CANCEL) != 0)
+		spin_lock_irqsave(shost->host_lock, flags);
+		if (scsi_device_set_state(sdev, SDEV_CANCEL) != 0) {
+			spin_unlock_irqrestore(shost->host_lock, flags);
 			return;
+		}
+		spin_unlock_irqrestore(shost->host_lock, flags);
 
 		bsg_unregister_queue(sdev->request_queue);
 		device_unregister(&sdev->sdev_dev);
@@ -975,7 +979,10 @@ void __scsi_remove_device(struct scsi_device *sdev)
 	 * scsi_run_queue() invocations have finished before tearing down the
 	 * device.
 	 */
+	spin_lock_irqsave(shost->host_lock, flags);
 	scsi_device_set_state(sdev, SDEV_DEL);
+	spin_unlock_irqrestore(shost->host_lock, flags);
+
 	blk_cleanup_queue(sdev->request_queue);
 	cancel_work_sync(&sdev->requeue_work);
 

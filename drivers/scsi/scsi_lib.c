@@ -2072,7 +2072,9 @@ EXPORT_SYMBOL(scsi_test_unit_ready);
  *	@state:	state to change to.
  *
  *	Returns zero if unsuccessful or an error if the requested 
- *	transition is illegal.
+ *	transition is illegal. It is the responsibility of the caller to make
+ *      sure that a call of this function does not race with other code that
+ *      accesses the device state, e.g. by holding the host lock.
  */
 int
 scsi_device_set_state(struct scsi_device *sdev, enum scsi_device_state state)
@@ -2433,21 +2435,19 @@ scsi_internal_device_block(struct scsi_device *sdev)
 	unsigned long flags;
 	int err = 0;
 
+	spin_lock_irqsave(q->queue_lock, flags);
 	err = scsi_device_set_state(sdev, SDEV_BLOCK);
-	if (err) {
+	if (err)
 		err = scsi_device_set_state(sdev, SDEV_CREATED_BLOCK);
 
-		if (err)
-			return err;
+	if (err == 0) {
+		/*
+		 * The device has transitioned to SDEV_BLOCK.  Stop the
+		 * block layer from calling the midlayer with this device's
+		 * request queue.
+		 */
+		blk_stop_queue(q);
 	}
-
-	/* 
-	 * The device has transitioned to SDEV_BLOCK.  Stop the
-	 * block layer from calling the midlayer with this device's
-	 * request queue. 
-	 */
-	spin_lock_irqsave(q->queue_lock, flags);
-	blk_stop_queue(q);
 	spin_unlock_irqrestore(q->queue_lock, flags);
 
 	return 0;
