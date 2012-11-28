@@ -3864,15 +3864,8 @@ fail_host_msg:
 static void
 fc_bsg_goose_queue(struct fc_rport *rport)
 {
-	if (!rport->rqst_q)
-		return;
-
-	/*
-	 * This get/put dance makes no sense
-	 */
-	get_device(&rport->dev);
-	blk_run_queue_async(rport->rqst_q);
-	put_device(&rport->dev);
+	if (rport->rqst_q)
+		blk_run_queue(rport->rqst_q);
 }
 
 /**
