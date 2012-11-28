@@ -1549,7 +1549,8 @@ static void scsi_request_fn(struct request_queue *q)
 		if (!req || !scsi_dev_queue_ready(q, sdev))
 			break;
 
-		if (unlikely(!scsi_device_online(sdev))) {
+		if (unlikely(!scsi_device_online(sdev) ||
+			     !scsi_host_scan_allowed(shost))) {
 			sdev_printk(KERN_ERR, sdev,
 				    "rejecting I/O to offline device\n");
 			scsi_kill_request(req, q);
