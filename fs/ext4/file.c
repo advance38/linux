@@ -24,6 +24,7 @@
 #include <linux/mount.h>
 #include <linux/path.h>
 #include <linux/quotaops.h>
+#include <linux/aio.h>
 #include "ext4.h"
 #include "ext4_jbd2.h"
 #include "xattr.h"
