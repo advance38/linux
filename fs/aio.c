@@ -67,13 +67,6 @@ struct kioctx {
 	unsigned long		user_id;
 	struct hlist_node	list;
 
-	wait_queue_head_t	wait;
-
-	spinlock_t		ctx_lock;
-
-	atomic_t		reqs_active;
-	struct list_head	active_reqs;	/* used for cancellation */
-
 	unsigned		nr;
 
 	/* sys_io_setup currently limits this to an unsigned int */
@@ -85,6 +78,18 @@ struct kioctx {
 	struct page		**ring_pages;
 	long			nr_pages;
 
+	struct rcu_head		rcu_head;
+	struct work_struct	rcu_work;
+
+	struct {
+		atomic_t	reqs_active;
+	} ____cacheline_aligned;
+
+	struct {
+		spinlock_t	ctx_lock;
+		struct list_head active_reqs;	/* used for cancellation */
+	} ____cacheline_aligned;
+
 	struct {
 		struct mutex	ring_lock;
 	} ____cacheline_aligned;
@@ -94,10 +99,11 @@ struct kioctx {
 		spinlock_t	completion_lock;
 	} ____cacheline_aligned;
 
-	struct page		*internal_pages[AIO_RING_PAGES];
+	struct {
+		wait_queue_head_t wait;
+	} ____cacheline_aligned;
 
-	struct rcu_head		rcu_head;
-	struct work_struct	rcu_work;
+	struct page		*internal_pages[AIO_RING_PAGES];
 };
 
 /*------ sysctl variables----*/
