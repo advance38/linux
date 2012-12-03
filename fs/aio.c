@@ -101,11 +101,11 @@ struct kioctx {
 
 	struct {
 		struct mutex	ring_lock;
+		unsigned	shadow_tail;
 	} ____cacheline_aligned;
 
 	struct {
 		unsigned	tail;
-		spinlock_t	completion_lock;
 	} ____cacheline_aligned;
 
 	struct {
@@ -311,9 +311,9 @@ static void free_ioctx(struct kioctx *ctx)
 	kunmap_atomic(ring);
 
 	while (atomic_read(&ctx->reqs_available) < ctx->nr) {
-		wait_event(ctx->wait, head != ctx->tail);
+		wait_event(ctx->wait, head != ctx->shadow_tail);
 
-		avail = (head < ctx->tail ? ctx->tail : ctx->nr) - head;
+		avail = (head < ctx->shadow_tail ? ctx->shadow_tail : ctx->nr) - head;
 
 		atomic_add(avail, &ctx->reqs_available);
 		head += avail;
@@ -378,7 +378,6 @@ static struct kioctx *ioctx_alloc(unsigned nr_events)
 	rcu_read_unlock();
 
 	spin_lock_init(&ctx->ctx_lock);
-	spin_lock_init(&ctx->completion_lock);
 	mutex_init(&ctx->ring_lock);
 	init_waitqueue_head(&ctx->wait);
 
@@ -686,9 +685,10 @@ void aio_complete(struct kiocb *iocb, long res, long res2)
 	 * ctx->ctx_lock to prevent other code from messing with the tail
 	 * pointer since we might be called from irq context.
 	 */
-	spin_lock_irqsave(&ctx->completion_lock, flags);
+	local_irq_save(flags);
+	while ((tail = xchg(&ctx->tail, UINT_MAX)) == UINT_MAX)
+		cpu_relax();
 
-	tail = ctx->tail;
 	pos = tail + AIO_EVENTS_OFFSET;
 
 	if (++tail >= ctx->nr)
@@ -714,14 +714,16 @@ void aio_complete(struct kiocb *iocb, long res, long res2)
 	 */
 	smp_wmb();	/* make event visible before updating tail */
 
-	ctx->tail = tail;
+	ctx->shadow_tail = tail;
 
 	ring = kmap_atomic(ctx->ring_pages[0]);
 	ring->tail = tail;
 	kunmap_atomic(ring);
 	flush_dcache_page(ctx->ring_pages[0]);
 
-	spin_unlock_irqrestore(&ctx->completion_lock, flags);
+	smp_wmb();
+	ctx->tail = tail;
+	local_irq_restore(flags);
 
 	pr_debug("added to ring %p at [%u]\n", iocb, tail);
 
@@ -766,11 +768,11 @@ static int aio_read_events(struct kioctx *ctx, struct io_event __user *event,
 	pr_debug("h%u t%u m%u\n", *head, ctx->tail, ctx->nr);
 
 	while (ret < nr) {
-		unsigned i = (*head < ctx->tail ? ctx->tail : ctx->nr) - *head;
+		unsigned i = (*head < ctx->shadow_tail ? ctx->shadow_tail : ctx->nr) - *head;
 		struct io_event *ev;
 		struct page *page;
 
-		if (*head == ctx->tail)
+		if (*head == ctx->shadow_tail)
 			break;
 
 		i = min_t(int, i, nr - ret);
@@ -860,7 +862,7 @@ retry:
 		prepare_to_wait_exclusive(&ctx->wait, &wait,
 					  TASK_INTERRUPTIBLE);
 
-		if (head != ctx->tail) {
+		if (head != ctx->shadow_tail) {
 			__set_current_state(TASK_RUNNING);
 			goto retry;
 		}
