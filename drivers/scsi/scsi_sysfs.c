@@ -598,7 +598,7 @@ static ssize_t
 store_state_field(struct device *dev, struct device_attribute *attr,
 		  const char *buf, size_t count)
 {
-	int i;
+	int i, ret;
 	struct scsi_device *sdev = to_scsi_device(dev);
 	enum scsi_device_state state = INVALID_SDEV_STATE;
 
@@ -614,9 +614,14 @@ store_state_field(struct device *dev, struct device_attribute *attr,
 	    state == SDEV_DEL)
 		return -EINVAL;
 
+	ret = count;
+
+	spin_lock_irq(sdev->host->host_lock);
 	if (scsi_device_set_state(sdev, state))
-		return -EINVAL;
-	return count;
+		ret = -EINVAL;
+	spin_unlock_irq(sdev->host->host_lock);
+
+	return ret;
 }
 
 static ssize_t
@@ -876,7 +881,10 @@ int scsi_sysfs_add_sdev(struct scsi_device *sdev)
 	struct request_queue *rq = sdev->request_queue;
 	struct scsi_target *starget = sdev->sdev_target;
 
+	spin_lock_irq(sdev->host->host_lock);
 	error = scsi_device_set_state(sdev, SDEV_RUNNING);
+	spin_unlock_irq(sdev->host->host_lock);
+
 	if (error)
 		return error;
 
@@ -963,8 +971,10 @@ void __scsi_remove_device(struct scsi_device *sdev)
 	unsigned long flags;
 
 	if (sdev->is_visible) {
+		spin_lock_irqsave(shost->host_lock, flags);
 		WARN_ON_ONCE(scsi_device_set_state(sdev, SDEV_CANCEL) != 0 &&
 			     scsi_device_set_state(sdev, SDEV_DEL) != 0);
+		spin_unlock_irqrestore(shost->host_lock, flags);
 
 		bsg_unregister_queue(sdev->request_queue);
 		device_unregister(&sdev->sdev_dev);
@@ -978,7 +988,10 @@ void __scsi_remove_device(struct scsi_device *sdev)
 	 * scsi_run_queue() invocations have finished before tearing down the
 	 * device.
 	 */
+	spin_lock_irqsave(shost->host_lock, flags);
 	scsi_device_set_state(sdev, SDEV_DEL);
+	spin_unlock_irqrestore(shost->host_lock, flags);
+
 	blk_cleanup_queue(sdev->request_queue);
 	cancel_work_sync(&sdev->requeue_work);
 

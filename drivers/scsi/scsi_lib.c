@@ -2074,7 +2074,9 @@ EXPORT_SYMBOL(scsi_test_unit_ready);
  *	@state:	state to change to.
  *
  *	Returns zero if unsuccessful or an error if the requested 
- *	transition is illegal.
+ *	transition is illegal. It is the responsibility of the caller to make
+ *      sure that a call of this function does not race with other code that
+ *      accesses the device state, e.g. by holding the host lock.
  */
 int
 scsi_device_set_state(struct scsi_device *sdev, enum scsi_device_state state)
@@ -2351,7 +2353,13 @@ EXPORT_SYMBOL_GPL(sdev_evt_send_simple);
 int
 scsi_device_quiesce(struct scsi_device *sdev)
 {
-	int err = scsi_device_set_state(sdev, SDEV_QUIESCE);
+	struct Scsi_Host *host = sdev->host;
+	int err;
+
+	spin_lock_irq(host->host_lock);
+	err = scsi_device_set_state(sdev, SDEV_QUIESCE);
+	spin_unlock_irq(host->host_lock);
+
 	if (err)
 		return err;
 
@@ -2375,13 +2383,21 @@ EXPORT_SYMBOL(scsi_device_quiesce);
  */
 void scsi_device_resume(struct scsi_device *sdev)
 {
+	struct Scsi_Host *host = sdev->host;
+	int err;
+
 	/* check if the device state was mutated prior to resume, and if
 	 * so assume the state is being managed elsewhere (for example
 	 * device deleted during suspend)
 	 */
-	if (sdev->sdev_state != SDEV_QUIESCE ||
-	    scsi_device_set_state(sdev, SDEV_RUNNING))
+	spin_lock_irq(host->host_lock);
+	err = sdev->sdev_state == SDEV_QUIESCE ?
+		scsi_device_set_state(sdev, SDEV_RUNNING) : -EINVAL;
+	spin_unlock_irq(host->host_lock);
+
+	if (err)
 		return;
+
 	scsi_run_queue(sdev->request_queue);
 }
 EXPORT_SYMBOL(scsi_device_resume);
@@ -2431,17 +2447,19 @@ EXPORT_SYMBOL(scsi_target_resume);
 int
 scsi_internal_device_block(struct scsi_device *sdev)
 {
+	struct Scsi_Host *host = sdev->host;
 	struct request_queue *q = sdev->request_queue;
 	unsigned long flags;
 	int err = 0;
 
+	spin_lock_irqsave(host->host_lock, flags);
 	err = scsi_device_set_state(sdev, SDEV_BLOCK);
-	if (err) {
+	if (err)
 		err = scsi_device_set_state(sdev, SDEV_CREATED_BLOCK);
+	spin_unlock_irqrestore(host->host_lock, flags);
 
-		if (err)
-			return err;
-	}
+	if (err)
+		return err;
 
 	/* 
 	 * The device has transitioned to SDEV_BLOCK.  Stop the
@@ -2476,13 +2494,16 @@ int
 scsi_internal_device_unblock(struct scsi_device *sdev,
 			     enum scsi_device_state new_state)
 {
+	struct Scsi_Host *host = sdev->host;
 	struct request_queue *q = sdev->request_queue; 
 	unsigned long flags;
+	int ret = 0;
 
 	/*
 	 * Try to transition the scsi device to SDEV_RUNNING or one of the
 	 * offlined states and goose the device queue if successful.
 	 */
+	spin_lock_irqsave(host->host_lock, flags);
 	if ((sdev->sdev_state == SDEV_BLOCK) ||
 	    (sdev->sdev_state == SDEV_TRANSPORT_OFFLINE))
 		sdev->sdev_state = new_state;
@@ -2494,7 +2515,11 @@ scsi_internal_device_unblock(struct scsi_device *sdev,
 			sdev->sdev_state = SDEV_CREATED;
 	} else if (sdev->sdev_state != SDEV_CANCEL &&
 		 sdev->sdev_state != SDEV_OFFLINE)
-		return -EINVAL;
+		ret = -EINVAL;
+	spin_unlock_irqrestore(host->host_lock, flags);
+
+	if (ret)
+		return ret;
 
 	spin_lock_irqsave(q->queue_lock, flags);
 	blk_start_queue(q);

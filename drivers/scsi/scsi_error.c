@@ -1432,7 +1432,11 @@ static void scsi_eh_offline_sdevs(struct list_head *work_q,
 	list_for_each_entry_safe(scmd, next, work_q, eh_entry) {
 		sdev_printk(KERN_INFO, scmd->device, "Device offlined - "
 			    "not ready after error recovery\n");
+
+		spin_lock_irq(scmd->device->host->host_lock);
 		scsi_device_set_state(scmd->device, SDEV_OFFLINE);
+		spin_unlock_irq(scmd->device->host->host_lock);
+
 		if (scmd->eh_eflags & SCSI_EH_CANCEL_CMD) {
 			/*
 			 * FIXME: Handle lost cmds.
