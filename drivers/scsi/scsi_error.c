@@ -536,8 +536,59 @@ static void scsi_eh_done(struct scsi_cmnd *scmd)
 }
 
 /**
+ * scsi_begin_eh - start host-related error handling
+ *
+ * Must be called before invoking any of the scsi_host_template.eh_* functions
+ * to avoid that scsi_remove_host() returns while one of these callback
+ * functions is in progress.
+ *
+ * Returns 0 if invoking an eh_* function is allowed and a negative value if
+ * not. If this function returns 0 then scsi_end_eh() must be called
+ * eventually.
+ *
+ * Note: scsi_send_eh_cmnd() calls do not have to be protected by a
+ * scsi_begin_eh() / scsi_end_eh() pair since these operate on an unfinished
+ * block layer request. Since scsi_remove_host() waits until all SCSI devices
+ * have been removed and since blk_cleanup_queue() is invoked during SCSI
+ * device removal scsi_remove_host() won't finish while a scsi_send_eh_cmnd()
+ * call is in progress.
+ */
+static int scsi_begin_eh(struct Scsi_Host *host)
+{
+	int res;
+
+	spin_lock_irq(host->host_lock);
+	switch (host->shost_state) {
+	case SHOST_DEL:
+	case SHOST_DEL_RECOVERY:
+		res = -ENODEV;
+		break;
+	default:
+		WARN_ON_ONCE(host->eh_active < 0 || host->eh_active > 1);
+		host->eh_active++;
+		res = 0;
+		break;
+	}
+	spin_unlock_irq(host->host_lock);
+
+	return res;
+}
+
+/**
+ * scsi_end_eh - finish host-related error handling
+ */
+static void scsi_end_eh(struct Scsi_Host *host)
+{
+	spin_lock_irq(host->host_lock);
+	host->eh_active--;
+	WARN_ON_ONCE(host->eh_active < 0 || host->eh_active > 1);
+	scsi_check_remove_host_done(host);
+	spin_unlock_irq(host->host_lock);
+}
+
+/**
  * scsi_try_host_reset - ask host adapter to reset itself
- * @scmd:	SCSI cmd to send hsot reset.
+ * @scmd:	SCSI cmd to send host reset.
  */
 static int scsi_try_host_reset(struct scsi_cmnd *scmd)
 {
@@ -552,6 +603,9 @@ static int scsi_try_host_reset(struct scsi_cmnd *scmd)
 	if (!hostt->eh_host_reset_handler)
 		return FAILED;
 
+	if (scsi_begin_eh(host))
+		return FAST_IO_FAIL;
+
 	rtn = hostt->eh_host_reset_handler(scmd);
 
 	if (rtn == SUCCESS) {
@@ -561,6 +615,7 @@ static int scsi_try_host_reset(struct scsi_cmnd *scmd)
 		scsi_report_bus_reset(host, scmd_channel(scmd));
 		spin_unlock_irqrestore(host->host_lock, flags);
 	}
+	scsi_end_eh(host);
 
 	return rtn;
 }
@@ -582,6 +637,9 @@ static int scsi_try_bus_reset(struct scsi_cmnd *scmd)
 	if (!hostt->eh_bus_reset_handler)
 		return FAILED;
 
+	if (scsi_begin_eh(host))
+		return FAST_IO_FAIL;
+
 	rtn = hostt->eh_bus_reset_handler(scmd);
 
 	if (rtn == SUCCESS) {
@@ -591,6 +649,7 @@ static int scsi_try_bus_reset(struct scsi_cmnd *scmd)
 		scsi_report_bus_reset(host, scmd_channel(scmd));
 		spin_unlock_irqrestore(host->host_lock, flags);
 	}
+	scsi_end_eh(host);
 
 	return rtn;
 }
@@ -621,6 +680,9 @@ static int scsi_try_target_reset(struct scsi_cmnd *scmd)
 	if (!hostt->eh_target_reset_handler)
 		return FAILED;
 
+	if (scsi_begin_eh(host))
+		return FAST_IO_FAIL;
+
 	rtn = hostt->eh_target_reset_handler(scmd);
 	if (rtn == SUCCESS) {
 		spin_lock_irqsave(host->host_lock, flags);
@@ -628,6 +690,7 @@ static int scsi_try_target_reset(struct scsi_cmnd *scmd)
 					  __scsi_report_device_reset);
 		spin_unlock_irqrestore(host->host_lock, flags);
 	}
+	scsi_end_eh(host);
 
 	return rtn;
 }
@@ -645,14 +708,20 @@ static int scsi_try_target_reset(struct scsi_cmnd *scmd)
 static int scsi_try_bus_device_reset(struct scsi_cmnd *scmd)
 {
 	int rtn;
-	struct scsi_host_template *hostt = scmd->device->host->hostt;
+	struct Scsi_Host *host = scmd->device->host;
+	struct scsi_host_template *hostt = host->hostt;
 
 	if (!hostt->eh_device_reset_handler)
 		return FAILED;
 
+	if (scsi_begin_eh(host))
+		return FAST_IO_FAIL;
+
 	rtn = hostt->eh_device_reset_handler(scmd);
 	if (rtn == SUCCESS)
 		__scsi_report_device_reset(scmd->device, NULL);
+	scsi_end_eh(host);
+
 	return rtn;
 }
 
@@ -1876,6 +1945,9 @@ int scsi_error_handler(void *data)
 			scsi_autopm_put_host(shost);
 	}
 	__set_current_state(TASK_RUNNING);
+
+	WARN_ONCE(shost->eh_active, "scsi_eh_%d: eh_active = %d\n",
+		  shost->host_no, shost->eh_active);
 
 	SCSI_LOG_ERROR_RECOVERY(1,
 		printk("Error handler scsi_eh_%d exiting\n", shost->host_no));

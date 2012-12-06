@@ -155,7 +155,7 @@ static bool scsi_remove_host_done(struct Scsi_Host *shost)
 {
 	lockdep_assert_held(shost->host_lock);
 
-	return list_empty(&shost->__devices);
+	return list_empty(&shost->__devices) && !shost->eh_active;
 }
 
 /* Test whether scsi_remove_host() may finish, and if so, wake it up. */
