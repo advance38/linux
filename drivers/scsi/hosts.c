@@ -150,12 +150,31 @@ int scsi_host_set_state(struct Scsi_Host *shost, enum scsi_host_state state)
 }
 EXPORT_SYMBOL(scsi_host_set_state);
 
+/* Return true if and only if scsi_remove_host() is allowed to finish. */
+static bool scsi_remove_host_done(struct Scsi_Host *shost)
+{
+	lockdep_assert_held(shost->host_lock);
+
+	return list_empty(&shost->__devices);
+}
+
+/* Test whether scsi_remove_host() may finish, and if so, wake it up. */
+void scsi_check_remove_host_done(struct Scsi_Host *shost)
+{
+	lockdep_assert_held(shost->host_lock);
+
+	if (scsi_remove_host_done(shost))
+		wake_up(&shost->remove_host);
+}
+
 /**
  * scsi_remove_host - remove a scsi host
  * @shost:	a pointer to a scsi host to remove
  **/
 void scsi_remove_host(struct Scsi_Host *shost)
 {
+	DEFINE_WAIT(wait);
+
 	mutex_lock(&shost->scan_mutex);
 	spin_lock_irq(shost->host_lock);
 	if (scsi_host_set_state(shost, SHOST_CANCEL))
@@ -174,6 +193,16 @@ void scsi_remove_host(struct Scsi_Host *shost)
 	spin_lock_irq(shost->host_lock);
 	if (scsi_host_set_state(shost, SHOST_DEL))
 		BUG_ON(scsi_host_set_state(shost, SHOST_DEL_RECOVERY));
+	while (!scsi_remove_host_done(shost)) {
+		prepare_to_wait_exclusive(&shost->remove_host, &wait,
+					  TASK_INTERRUPTIBLE);
+		if (scsi_remove_host_done(shost))
+			break;
+		spin_unlock_irq(shost->host_lock);
+		schedule();
+		spin_lock_irq(shost->host_lock);
+	}
+	finish_wait(&shost->remove_host, &wait);
 	spin_unlock_irq(shost->host_lock);
 
 	transport_unregister_device(&shost->shost_gendev);
@@ -349,6 +378,7 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 	shost->shost_state = SHOST_CREATED;
 	INIT_LIST_HEAD(&shost->__devices);
 	INIT_LIST_HEAD(&shost->__targets);
+	init_waitqueue_head(&shost->remove_host);
 	INIT_LIST_HEAD(&shost->eh_cmd_q);
 	INIT_LIST_HEAD(&shost->starved_list);
 	init_waitqueue_head(&shost->host_wait);

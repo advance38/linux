@@ -577,6 +577,7 @@ struct Scsi_Host {
 	struct completion     * eh_action; /* Wait for specific actions on the
 					      host. */
 	wait_queue_head_t       host_wait;
+	wait_queue_head_t	remove_host;
 	struct scsi_host_template *hostt;
 	struct scsi_transport_template *transportt;
 

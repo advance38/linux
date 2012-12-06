@@ -26,6 +26,7 @@ struct scsi_nl_hdr;
 /* hosts.c */
 extern int scsi_init_hosts(void);
 extern void scsi_exit_hosts(void);
+extern void scsi_check_remove_host_done(struct Scsi_Host *shost);
 
 /* scsi.c */
 extern int scsi_dispatch_cmd(struct scsi_cmnd *cmd);
