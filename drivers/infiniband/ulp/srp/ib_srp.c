@@ -553,10 +553,11 @@ static void srp_remove_target(struct srp_target_port *target)
 	if (scsi_host_added) {
 		srp_del_scsi_host_attr(shost);
 		srp_remove_host(shost);
+		srp_disconnect_target(target);
 		scsi_remove_host(shost);
-	}
+	} else
+		srp_disconnect_target(target);
 
-	srp_disconnect_target(target);
 	ib_destroy_cm_id(target->cm_id);
 	cancel_work_sync(&target->tl_err_work);
 	srp_free_target_ib(target);
