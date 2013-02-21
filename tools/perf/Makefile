@@ -576,8 +576,9 @@ ifndef NO_LIBLOCKDEP
 # for linking with liblockdep library, run like:
 # make LIBLOCKDEP=1
 ifeq ($(LOCKDEP),1)
+	LIBLOCKDEP_LIBS := -llockdep
 	LIBLOCKDEP_CFLAGS  := -I../lib/lockdep/include -D__USE_LIBLOCKDEP
-	LIBLOCKDEP_LDFLAGS := -L../lib/lockdep/ -llockdep
+	LIBLOCKDEP_LDFLAGS := -L../lib/lockdep/ $(LIBLOCKDEP_LIBS)
 endif
 
 FLAGS_LIBLOCKDEP=$(LIBLOCKDEP_CFLAGS) $(ALL_CFLAGS) $(LIBLOCKDEP_LDFLAGS) $(ALL_LDFLAGS) $(EXTLIBS)
