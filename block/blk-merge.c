@@ -289,7 +289,7 @@ static int __blk_bios_map_sg(struct request_queue *q, struct bio *bio,
 			     struct scatterlist *sglist,
 			     struct scatterlist **sg)
 {
-	struct scatterlist *sg = NULL;
+	struct bio_vec bvec;
 	unsigned nsegs;
 
 	if (bio->bi_rw & REQ_DISCARD) {
