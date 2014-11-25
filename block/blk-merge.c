@@ -318,7 +318,7 @@ single_segment:
 	/*
 	 * for each bio in rq
 	 */
-	nsegs = __blk_segment_map_sg(q, rq->bio, sglist, &sg);
+	nsegs = __blk_segment_map_sg(q, bio, sglist, sg);
 
 	return nsegs;
 }
