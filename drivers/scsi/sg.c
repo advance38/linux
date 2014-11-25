@@ -1768,7 +1768,7 @@ sg_start_req(Sg_request *srp, unsigned char *cmd)
 		if (IS_ERR(iov))
 			return PTR_ERR(iov);
 
-		iov_iter_init(&i, iov, iov_count,
+		iov_iter_init(&i, rw, iov, iov_count,
 			      min_t(size_t, hp->dxfer_len,
 				    iov_length(iov, iov_count)));
 
