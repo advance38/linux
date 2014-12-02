@@ -403,7 +403,8 @@ STATIC struct bio *
 xfs_alloc_ioend_bio(
 	struct buffer_head	*bh)
 {
-	struct bio		*bio = bio_alloc(GFP_NOIO, BIO_MAX_PAGES);
+	int			nvecs = bio_get_nr_vecs(bh->b_bdev);
+	struct bio		*bio = bio_alloc(GFP_NOIO, nvecs);
 
 	ASSERT(bio->bi_private == NULL);
 	bio->bi_iter.bi_sector = bh->b_blocknr * (bh->b_size >> 9);

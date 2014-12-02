@@ -163,7 +163,7 @@ static int do_erase(struct super_block *sb, u64 ofs, pgoff_t index,
 	unsigned int max_pages;
 	int i;
 
-	max_pages = min(nr_pages, (size_t) BIO_MAX_PAGES);
+	max_pages = min(nr_pages, (size_t) bio_get_nr_vecs(super->s_bdev));
 
 	bio = bio_alloc(GFP_NOFS, max_pages);
 	BUG_ON(!bio);
