@@ -309,22 +309,6 @@ static int get_blocks(struct dio *dio, loff_t offset, size_t size,
 	return ret;
 }
 
-static void __dio_bio_submit(struct dio *dio, struct bio *bio,
-			     loff_t offset, dio_submit_t *submit_io)
-{
-	/*
-	 * Read accounting is performed in submit_bio()
-	 */
-	if (dio->rw & WRITE)
-		task_io_account_write(bio->bi_iter.bi_size);
-
-	if (submit_io)
-		submit_io(dio->rw, bio, dio->inode,
-			  offset >> dio->i_blkbits);
-	else
-		submit_bio(dio->rw, bio);
-}
-
 /*
  * For reads we speculatively dirty the pages before starting IO. During IO
  * completion, any of these pages which happen to have been written back will be
@@ -351,15 +335,24 @@ static int dio_bio_submit(struct dio *dio, struct bio *bio,
 
 	dio->result += map->size;
 
-	__dio_bio_submit(dio, bio, offset, submit_io);
+	/*
+	 * Read accounting is performed in submit_bio()
+	 */
+	if (dio->rw & WRITE)
+		task_io_account_write(split->bi_iter.bi_size);
+
+	if (submit_io)
+		submit_io(dio->rw, split, dio->inode,
+			  offset >> dio->i_blkbits);
+	else
+		submit_bio(dio->rw, split);
 
 	return split == bio;
 }
 
 static void dio_write_zeroes(struct dio *dio, struct bio *parent,
 			     struct block_device *bdev,
-			     sector_t sector, size_t size,
-			     loff_t offset, dio_submit_t *submit_io)
+			     sector_t sector, size_t size)
 {
 	unsigned pages = DIV_ROUND_UP(size, PAGE_SIZE);
 	struct bio *bio = bio_alloc(GFP_KERNEL, pages);
@@ -375,35 +368,26 @@ static void dio_write_zeroes(struct dio *dio, struct bio *parent,
 	bio->bi_iter.bi_size = size;
 
 	bio_chain(bio, parent);
-	__dio_bio_submit(dio, bio, offset, submit_io);
+	submit_bio(WRITE, bio);
 }
 
-static void dio_zero_partial_block_front(struct dio *dio, struct bio *bio,
-					 struct dio_mapping *map, loff_t offset,
-					 dio_submit_t *submit_io)
+static void dio_zero_partial_block(struct dio *dio, struct bio *bio,
+				   struct dio_mapping *map, loff_t offset)
 {
 	unsigned blksize = 1 << dio->i_blkbits;
 	unsigned blkmask = blksize - 1;
 	unsigned front = offset & blkmask;
+	unsigned back = (offset + map->size) & blkmask;
 
 	if (front)
 		dio_write_zeroes(dio, bio, map->bdev,
 				 (map->offset - front) >> 9,
-				 front, offset, submit_io);
-}
-
-static void dio_zero_partial_block_back(struct dio *dio, struct bio *bio,
-					struct dio_mapping *map, loff_t offset,
-					dio_submit_t *submit_io)
-{
-	unsigned blksize = 1 << dio->i_blkbits;
-	unsigned blkmask = blksize - 1;
-	unsigned back = (offset + map->size) & blkmask;
+				 front);
 
 	if (back)
 		dio_write_zeroes(dio, bio, map->bdev,
 				 (map->offset + map->size) >> 9,
-				 blksize - back, offset, submit_io);
+				 blksize - back);
 }
 
 static int dio_read_zeroes(struct dio *dio, struct bio *bio,
@@ -438,7 +422,6 @@ static int dio_send_bio(struct dio *dio, struct bio *bio, loff_t offset,
 {
 	struct dio_mapping map;
 	int ret = 0, rw = dio->rw & WRITE;
-	bool done;
 
 	if (rw == READ)
 		bio_set_pages_dirty(bio);
@@ -475,17 +458,10 @@ static int dio_send_bio(struct dio *dio, struct bio *bio, loff_t offset,
 				goto out;
 			}
 
-			dio_zero_partial_block_front(dio, bio, &map,
-						     offset, submit_io);
+			dio_zero_partial_block(dio, bio, &map, offset);
 
-			done = dio_bio_submit(dio, bio, &map, offset, submit_io);
-
-			dio_zero_partial_block_back(dio, bio, &map,
-						    offset, submit_io);
-
-			if (done)
+			if (dio_bio_submit(dio, bio, &map, offset, submit_io))
 				goto out;
-
 			break;
 		case MAP_UNMAPPED|WRITE:
 			/* AKPM: eargh, -ENOTBLK is a hack */
